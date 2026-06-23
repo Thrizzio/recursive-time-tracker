@@ -1,0 +1,13 @@
+{
+  "name": "chronolog",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A retrospective time logging application.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "echo \"Dev scripts will be added after the frontend and backend are scaffolded.\""
+  }
+}
