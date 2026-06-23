@@ -8,6 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "echo \"Dev scripts will be added after the frontend and backend are scaffolded.\""
+    "dev": "npm run dev --workspace @chronolog/web",
+    "dev:web": "npm run dev --workspace @chronolog/web"
   }
 }
