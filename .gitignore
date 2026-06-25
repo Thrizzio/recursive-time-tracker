@@ -17,3 +17,5 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 !.vscode/extensions.json
+
+PROMPT.md
