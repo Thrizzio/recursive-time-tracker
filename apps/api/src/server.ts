@@ -1,8 +1,8 @@
 import express from "express";
 import cors from "cors";
-import { asc } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "./db/client.js";
-import { activities } from "./db/schema.js";
+import { activities, timeLogs } from "./db/schema.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -43,6 +43,30 @@ app.post("/activities", async (request, response) => {
     .returning();
 
   response.status(201).json(activity);
+});
+
+app.post("/time-logs", async (request, response) => {
+  const activityId = Number(request.body.activityId);
+
+  if (!Number.isInteger(activityId) || activityId <= 0) {
+    response.status(400).json({ error: "A valid activityId is required." });
+    return;
+  }
+
+  const [existingActivity] = await db
+    .select({ id: activities.id })
+    .from(activities)
+    .where(eq(activities.id, activityId))
+    .limit(1);
+
+  if (!existingActivity) {
+    response.status(404).json({ error: "Activity not found." });
+    return;
+  }
+
+  const [timeLog] = await db.insert(timeLogs).values({ activityId }).returning();
+
+  response.status(201).json(timeLog);
 });
 
 app.listen(port, () => {

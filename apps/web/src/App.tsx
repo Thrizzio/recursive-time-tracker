@@ -14,7 +14,9 @@ export function App() {
   const [name, setName] = useState("");
   const [color, setColor] = useState("#38bdf8");
   const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoggingId, setIsLoggingId] = useState<number | null>(null);
 
   useEffect(() => {
     async function loadActivities() {
@@ -32,6 +34,7 @@ export function App() {
   async function createActivity(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
+    setFeedback("");
     setIsSubmitting(true);
 
     try {
@@ -52,10 +55,45 @@ export function App() {
 
       setActivities((currentActivities) => [...currentActivities, data]);
       setName("");
+      setFeedback(`Created ${data.name}.`);
     } catch {
       setError("Could not create activity.");
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function logActivity(activityId: number, activityName: string) {
+    setError("");
+    setFeedback("");
+    setIsLoggingId(activityId);
+
+    try {
+      const response = await fetch(`${apiUrl}/time-logs`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ activityId }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError(data.error ?? "Could not log activity.");
+        return;
+      }
+
+      const loggedAt = new Date(data.loggedAt).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      });
+
+      setFeedback(`Logged ${activityName} at ${loggedAt}.`);
+    } catch {
+      setError("Could not log activity.");
+    } finally {
+      setIsLoggingId(null);
     }
   }
 
@@ -67,9 +105,7 @@ export function App() {
             Chronolog
           </p>
           <div className="space-y-2">
-            <h1 className="text-3xl font-semibold leading-tight">
-              Activities
-            </h1>
+            <h1 className="text-3xl font-semibold leading-tight">Activities</h1>
             <p className="text-base leading-7 text-zinc-300">
               Create the activities you want to track before logging time.
             </p>
@@ -99,6 +135,9 @@ export function App() {
           </label>
 
           {error ? <p className="text-sm text-red-300">{error}</p> : null}
+          {feedback ? (
+            <p className="text-sm text-emerald-300">{feedback}</p>
+          ) : null}
 
           <button
             className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 disabled:cursor-not-allowed disabled:opacity-60"
@@ -120,14 +159,25 @@ export function App() {
             <ul className="space-y-3">
               {activities.map((activity) => (
                 <li
-                  className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
+                  className="flex items-center justify-between gap-3 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
                   key={activity.id}
                 >
-                  <span
-                    className="h-4 w-4 rounded-full"
-                    style={{ backgroundColor: activity.color }}
-                  />
-                  <span className="font-medium">{activity.name}</span>
+                  <div className="flex items-center gap-3">
+                    <span
+                      className="h-4 w-4 rounded-full"
+                      style={{ backgroundColor: activity.color }}
+                    />
+                    <span className="font-medium">{activity.name}</span>
+                  </div>
+
+                  <button
+                    className="rounded-md bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={isLoggingId === activity.id}
+                    onClick={() => logActivity(activity.id, activity.name)}
+                    type="button"
+                  >
+                    {isLoggingId === activity.id ? "Logging..." : "Log"}
+                  </button>
                 </li>
               ))}
             </ul>
