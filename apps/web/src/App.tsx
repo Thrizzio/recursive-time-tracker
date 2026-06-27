@@ -7,28 +7,129 @@ type Activity = {
   createdAt: string;
 };
 
+type TimeLog = {
+  id: number;
+  activityId: number;
+  loggedAt: string;
+  createdAt: string;
+  activity: {
+    id: number;
+    name: string;
+    color: string;
+  };
+};
+
+type TimelineInterval = {
+  id: string;
+  activity: TimeLog["activity"];
+  start: Date;
+  end: Date;
+  isCurrent: boolean;
+};
+
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
+
+function formatTime(date: Date) {
+  return date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatDuration(start: Date, end: Date) {
+  const minutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+
+  if (minutes < 1) {
+    return "Less than 1 min";
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+
+  if (hours === 0) {
+    return `${minutes} min`;
+  }
+
+  if (remainingMinutes === 0) {
+    return `${hours} hr`;
+  }
+
+  return `${hours} hr ${remainingMinutes} min`;
+}
+
+function buildTimelineIntervals(logs: TimeLog[], now: Date) {
+  const intervals: TimelineInterval[] = [];
+
+  for (let index = 1; index < logs.length; index += 1) {
+    const previousLog = logs[index - 1];
+    const currentLog = logs[index];
+
+    intervals.push({
+      id: `closed-${currentLog.id}`,
+      activity: currentLog.activity,
+      start: new Date(previousLog.loggedAt),
+      end: new Date(currentLog.loggedAt),
+      isCurrent: false,
+    });
+  }
+
+  const latestLog = logs.at(-1);
+
+  if (latestLog) {
+    intervals.push({
+      id: `current-${latestLog.id}`,
+      activity: latestLog.activity,
+      start: new Date(latestLog.loggedAt),
+      end: now,
+      isCurrent: true,
+    });
+  }
+
+  return intervals.reverse();
+}
 
 export function App() {
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
   const [name, setName] = useState("");
   const [color, setColor] = useState("#38bdf8");
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoggingId, setIsLoggingId] = useState<number | null>(null);
+  const [now, setNow] = useState(() => new Date());
+
+  const timelineIntervals = buildTimelineIntervals(timeLogs, now);
 
   useEffect(() => {
-    async function loadActivities() {
-      const response = await fetch(`${apiUrl}/activities`);
-      const data = (await response.json()) as Activity[];
+    async function loadInitialData() {
+      const [activitiesResponse, timeLogsResponse] = await Promise.all([
+        fetch(`${apiUrl}/activities`),
+        fetch(`${apiUrl}/time-logs`),
+      ]);
 
-      setActivities(data);
+      if (!activitiesResponse.ok || !timeLogsResponse.ok) {
+        throw new Error("Could not load initial data.");
+      }
+
+      const activitiesData = (await activitiesResponse.json()) as Activity[];
+      const timeLogsData = (await timeLogsResponse.json()) as TimeLog[];
+
+      setActivities(activitiesData);
+      setTimeLogs(timeLogsData);
     }
 
-    loadActivities().catch(() => {
-      setError("Could not load activities.");
+    loadInitialData().catch(() => {
+      setError("Could not load Chronolog data.");
     });
+  }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNow(new Date());
+    }, 60000);
+
+    return () => window.clearInterval(intervalId);
   }, []);
 
   async function createActivity(event: FormEvent<HTMLFormElement>) {
@@ -63,10 +164,10 @@ export function App() {
     }
   }
 
-  async function logActivity(activityId: number, activityName: string) {
+  async function logActivity(activity: Activity) {
     setError("");
     setFeedback("");
-    setIsLoggingId(activityId);
+    setIsLoggingId(activity.id);
 
     try {
       const response = await fetch(`${apiUrl}/time-logs`, {
@@ -74,7 +175,7 @@ export function App() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ activityId }),
+        body: JSON.stringify({ activityId: activity.id }),
       });
 
       const data = await response.json();
@@ -84,12 +185,19 @@ export function App() {
         return;
       }
 
-      const loggedAt = new Date(data.loggedAt).toLocaleTimeString([], {
-        hour: "numeric",
-        minute: "2-digit",
-      });
-
-      setFeedback(`Logged ${activityName} at ${loggedAt}.`);
+      setTimeLogs((currentLogs) => [
+        ...currentLogs,
+        {
+          ...data,
+          activity: {
+            id: activity.id,
+            name: activity.name,
+            color: activity.color,
+          },
+        },
+      ]);
+      setNow(new Date());
+      setFeedback(`Logged ${activity.name} at ${formatTime(new Date(data.loggedAt))}.`);
     } catch {
       setError("Could not log activity.");
     } finally {
@@ -162,22 +270,76 @@ export function App() {
                   className="flex items-center justify-between gap-3 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
                   key={activity.id}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     <span
-                      className="h-4 w-4 rounded-full"
+                      className="h-4 w-4 flex-none rounded-full"
                       style={{ backgroundColor: activity.color }}
                     />
-                    <span className="font-medium">{activity.name}</span>
+                    <span className="truncate font-medium">{activity.name}</span>
                   </div>
 
                   <button
                     className="rounded-md bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
                     disabled={isLoggingId === activity.id}
-                    onClick={() => logActivity(activity.id, activity.name)}
+                    onClick={() => logActivity(activity)}
                     type="button"
                   >
                     {isLoggingId === activity.id ? "Logging..." : "Log"}
                   </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="space-y-3">
+          <div className="flex items-end justify-between gap-3">
+            <h2 className="text-lg font-semibold">Timeline</h2>
+            {timelineIntervals.length > 0 ? (
+              <p className="text-sm text-zinc-400">
+                {timelineIntervals.length} intervals
+              </p>
+            ) : null}
+          </div>
+
+          {timelineIntervals.length === 0 ? (
+            <p className="rounded-md border border-dashed border-zinc-700 px-4 py-5 text-sm text-zinc-400">
+              Log an activity to start the timeline.
+            </p>
+          ) : (
+            <ul className="space-y-3">
+              {timelineIntervals.map((interval) => (
+                <li
+                  className="rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
+                  key={interval.id}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span
+                        className="h-4 w-4 flex-none rounded-full"
+                        style={{ backgroundColor: interval.activity.color }}
+                      />
+                      <span className="truncate font-medium">
+                        {interval.activity.name}
+                      </span>
+                    </div>
+
+                    {interval.isCurrent ? (
+                      <span className="rounded-md bg-emerald-400 px-2 py-1 text-xs font-semibold text-zinc-950">
+                        Current
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-zinc-400">
+                    <span>{formatTime(interval.start)}</span>
+                    <span>to</span>
+                    <span>
+                      {interval.isCurrent ? "now" : formatTime(interval.end)}
+                    </span>
+                    <span className="text-zinc-600">/</span>
+                    <span>{formatDuration(interval.start, interval.end)}</span>
+                  </div>
                 </li>
               ))}
             </ul>

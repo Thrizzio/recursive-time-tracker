@@ -23,6 +23,26 @@ app.get("/activities", async (_request, response) => {
   response.json(rows);
 });
 
+app.get("/time-logs", async (_request, response) => {
+  const rows = await db
+    .select({
+      id: timeLogs.id,
+      activityId: timeLogs.activityId,
+      loggedAt: timeLogs.loggedAt,
+      createdAt: timeLogs.createdAt,
+      activity: {
+        id: activities.id,
+        name: activities.name,
+        color: activities.color,
+      },
+    })
+    .from(timeLogs)
+    .innerJoin(activities, eq(timeLogs.activityId, activities.id))
+    .orderBy(asc(timeLogs.loggedAt));
+
+  response.json(rows);
+});
+
 app.post("/activities", async (request, response) => {
   const name = typeof request.body.name === "string" ? request.body.name.trim() : "";
   const color = typeof request.body.color === "string" ? request.body.color.trim() : "";
