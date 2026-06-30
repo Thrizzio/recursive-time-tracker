@@ -4,6 +4,7 @@
 Switch the app from a planning-first flow to a live tracking flow:
 - Before pressing Start: the user declares what they plan to do.
 - After pressing Start: the app begins tracking time and the user logs what they actually did.
+- The Start is also a one time thing so on the first time you ever load up , this button will be present.
 
 ## Core Logic Switch
 Introduce a simple mode state:
