@@ -24,10 +24,10 @@ type TimelineInterval = {
   activity: TimeLog["activity"];
   start: Date;
   end: Date;
-  isCurrent: boolean;
 };
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
+const trackingStartedAtStorageKey = "chronolog.trackingStartedAt";
 
 function formatTime(date: Date) {
   return date.toLocaleTimeString([], {
@@ -57,35 +57,42 @@ function formatDuration(start: Date, end: Date) {
   return `${hours} hr ${remainingMinutes} min`;
 }
 
-function buildTimelineIntervals(logs: TimeLog[], now: Date) {
+function formatElapsedTime(start: Date, end: Date) {
+  const totalSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  return [hours, minutes, seconds]
+    .map((value) => value.toString().padStart(2, "0"))
+    .join(":");
+}
+
+function buildTimelineIntervals(logs: TimeLog[], trackingStartedAt: string | null) {
   const intervals: TimelineInterval[] = [];
 
-  for (let index = 1; index < logs.length; index += 1) {
-    const previousLog = logs[index - 1];
+  for (let index = 0; index < logs.length; index += 1) {
     const currentLog = logs[index];
+    const previousLog = logs[index - 1];
+    const start = previousLog?.loggedAt ?? trackingStartedAt;
+
+    if (!start) {
+      continue;
+    }
 
     intervals.push({
       id: `closed-${currentLog.id}`,
       activity: currentLog.activity,
-      start: new Date(previousLog.loggedAt),
+      start: new Date(start),
       end: new Date(currentLog.loggedAt),
-      isCurrent: false,
-    });
-  }
-
-  const latestLog = logs.at(-1);
-
-  if (latestLog) {
-    intervals.push({
-      id: `current-${latestLog.id}`,
-      activity: latestLog.activity,
-      start: new Date(latestLog.loggedAt),
-      end: now,
-      isCurrent: true,
     });
   }
 
   return intervals.reverse();
+}
+
+function getLastLogBoundary(logs: TimeLog[], trackingStartedAt: string | null) {
+  return logs.at(-1)?.loggedAt ?? trackingStartedAt;
 }
 
 export function App() {
@@ -97,9 +104,17 @@ export function App() {
   const [feedback, setFeedback] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoggingId, setIsLoggingId] = useState<number | null>(null);
+  const [trackingStartedAt, setTrackingStartedAt] = useState<string | null>(() =>
+    localStorage.getItem(trackingStartedAtStorageKey),
+  );
   const [now, setNow] = useState(() => new Date());
 
-  const timelineIntervals = buildTimelineIntervals(timeLogs, now);
+  const timelineIntervals = buildTimelineIntervals(timeLogs, trackingStartedAt);
+  const hasTrackingStarted = trackingStartedAt !== null || timeLogs.length > 0;
+  const lastLogBoundary = getLastLogBoundary(timeLogs, trackingStartedAt);
+  const timeSinceLastLog = lastLogBoundary
+    ? formatElapsedTime(new Date(lastLogBoundary), now)
+    : "00:00:00";
 
   useEffect(() => {
     async function loadInitialData() {
@@ -127,10 +142,20 @@ export function App() {
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       setNow(new Date());
-    }, 60000);
+    }, 1000);
 
     return () => window.clearInterval(intervalId);
   }, []);
+
+  function startTracking() {
+    const startedAt = new Date().toISOString();
+
+    localStorage.setItem(trackingStartedAtStorageKey, startedAt);
+    setTrackingStartedAt(startedAt);
+    setNow(new Date(startedAt));
+    setFeedback(`Tracking started at ${formatTime(new Date(startedAt))}.`);
+    setError("");
+  }
 
   async function createActivity(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -168,6 +193,7 @@ export function App() {
     setError("");
     setFeedback("");
     setIsLoggingId(activity.id);
+    const logStartedAt = lastLogBoundary ? new Date(lastLogBoundary) : null;
 
     try {
       const response = await fetch(`${apiUrl}/time-logs`, {
@@ -197,7 +223,12 @@ export function App() {
         },
       ]);
       setNow(new Date());
-      setFeedback(`Logged ${activity.name} at ${formatTime(new Date(data.loggedAt))}.`);
+      const loggedAt = new Date(data.loggedAt);
+      const elapsed = logStartedAt ? formatDuration(logStartedAt, loggedAt) : "0 min";
+
+      setFeedback(
+        `Logged ${elapsed} as ${activity.name} at ${formatTime(loggedAt)}.`,
+      );
     } catch {
       setError("Could not log activity.");
     } finally {
@@ -219,6 +250,46 @@ export function App() {
             </p>
           </div>
         </header>
+
+        {!hasTrackingStarted ? (
+          <section className="space-y-3 rounded-md border border-cyan-700 bg-cyan-950/40 px-4 py-4">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold">Start tracking</h2>
+              <p className="text-sm leading-6 text-cyan-100">
+                Press this once when you want Chronolog to begin counting time.
+              </p>
+            </div>
+
+            <button
+              className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950"
+              onClick={startTracking}
+              type="button"
+            >
+              Start tracking
+            </button>
+          </section>
+        ) : null}
+
+        {hasTrackingStarted ? (
+          <section className="rounded-md border border-zinc-800 bg-zinc-900 px-4 py-4">
+            <div className="flex items-end justify-between gap-4">
+              <div className="space-y-1">
+                <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-400">
+                  Since last log
+                </h2>
+                <p className="text-4xl font-semibold tabular-nums text-zinc-50">
+                  {timeSinceLastLog}
+                </p>
+              </div>
+
+              <p className="pb-1 text-right text-sm text-zinc-400">
+                {lastLogBoundary
+                  ? `Started ${formatTime(new Date(lastLogBoundary))}`
+                  : "Waiting to start"}
+              </p>
+            </div>
+          </section>
+        ) : null}
 
         <form className="space-y-4" onSubmit={createActivity}>
           <label className="block space-y-2">
@@ -280,7 +351,7 @@ export function App() {
 
                   <button
                     className="rounded-md bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={isLoggingId === activity.id}
+                    disabled={!hasTrackingStarted || isLoggingId === activity.id}
                     onClick={() => logActivity(activity)}
                     type="button"
                   >
@@ -304,7 +375,9 @@ export function App() {
 
           {timelineIntervals.length === 0 ? (
             <p className="rounded-md border border-dashed border-zinc-700 px-4 py-5 text-sm text-zinc-400">
-              Log an activity to start the timeline.
+              {hasTrackingStarted
+                ? "Log an activity to create your first interval."
+                : "Start tracking to begin the timeline."}
             </p>
           ) : (
             <ul className="space-y-3">
@@ -324,21 +397,15 @@ export function App() {
                       </span>
                     </div>
 
-                    {interval.isCurrent ? (
-                      <span className="rounded-md bg-emerald-400 px-2 py-1 text-xs font-semibold text-zinc-950">
-                        Current
-                      </span>
-                    ) : null}
+                    <span className="text-sm text-zinc-400">
+                      {formatDuration(interval.start, interval.end)}
+                    </span>
                   </div>
 
                   <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-zinc-400">
                     <span>{formatTime(interval.start)}</span>
                     <span>to</span>
-                    <span>
-                      {interval.isCurrent ? "now" : formatTime(interval.end)}
-                    </span>
-                    <span className="text-zinc-600">/</span>
-                    <span>{formatDuration(interval.start, interval.end)}</span>
+                    <span>{formatTime(interval.end)}</span>
                   </div>
                 </li>
               ))}
