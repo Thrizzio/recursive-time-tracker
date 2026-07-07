@@ -24,7 +24,6 @@ type TimelineInterval = {
   activity: TimeLog["activity"];
   start: Date;
   end: Date;
-  isCurrent: boolean;
 };
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
@@ -69,11 +68,7 @@ function formatElapsedTime(start: Date, end: Date) {
     .join(":");
 }
 
-function buildTimelineIntervals(
-  logs: TimeLog[],
-  now: Date,
-  trackingStartedAt: string | null,
-) {
+function buildTimelineIntervals(logs: TimeLog[], trackingStartedAt: string | null) {
   const intervals: TimelineInterval[] = [];
 
   for (let index = 0; index < logs.length; index += 1) {
@@ -90,19 +85,6 @@ function buildTimelineIntervals(
       activity: currentLog.activity,
       start: new Date(start),
       end: new Date(currentLog.loggedAt),
-      isCurrent: false,
-    });
-  }
-
-  const latestLog = logs.at(-1);
-
-  if (latestLog) {
-    intervals.push({
-      id: `current-${latestLog.id}`,
-      activity: latestLog.activity,
-      start: new Date(latestLog.loggedAt),
-      end: now,
-      isCurrent: true,
     });
   }
 
@@ -127,11 +109,7 @@ export function App() {
   );
   const [now, setNow] = useState(() => new Date());
 
-  const timelineIntervals = buildTimelineIntervals(
-    timeLogs,
-    now,
-    trackingStartedAt,
-  );
+  const timelineIntervals = buildTimelineIntervals(timeLogs, trackingStartedAt);
   const hasTrackingStarted = trackingStartedAt !== null || timeLogs.length > 0;
   const lastLogBoundary = getLastLogBoundary(timeLogs, trackingStartedAt);
   const timeSinceLastLog = lastLogBoundary
@@ -419,21 +397,15 @@ export function App() {
                       </span>
                     </div>
 
-                    {interval.isCurrent ? (
-                      <span className="rounded-md bg-emerald-400 px-2 py-1 text-xs font-semibold text-zinc-950">
-                        Current
-                      </span>
-                    ) : null}
+                    <span className="text-sm text-zinc-400">
+                      {formatDuration(interval.start, interval.end)}
+                    </span>
                   </div>
 
                   <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-zinc-400">
                     <span>{formatTime(interval.start)}</span>
                     <span>to</span>
-                    <span>
-                      {interval.isCurrent ? "now" : formatTime(interval.end)}
-                    </span>
-                    <span className="text-zinc-600">/</span>
-                    <span>{formatDuration(interval.start, interval.end)}</span>
+                    <span>{formatTime(interval.end)}</span>
                   </div>
                 </li>
               ))}
