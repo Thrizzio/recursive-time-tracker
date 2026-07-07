@@ -28,6 +28,7 @@ type TimelineInterval = {
 };
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
+const trackingStartedAtStorageKey = "chronolog.trackingStartedAt";
 
 function formatTime(date: Date) {
   return date.toLocaleTimeString([], {
@@ -57,17 +58,26 @@ function formatDuration(start: Date, end: Date) {
   return `${hours} hr ${remainingMinutes} min`;
 }
 
-function buildTimelineIntervals(logs: TimeLog[], now: Date) {
+function buildTimelineIntervals(
+  logs: TimeLog[],
+  now: Date,
+  trackingStartedAt: string | null,
+) {
   const intervals: TimelineInterval[] = [];
 
-  for (let index = 1; index < logs.length; index += 1) {
-    const previousLog = logs[index - 1];
+  for (let index = 0; index < logs.length; index += 1) {
     const currentLog = logs[index];
+    const previousLog = logs[index - 1];
+    const start = previousLog?.loggedAt ?? trackingStartedAt;
+
+    if (!start) {
+      continue;
+    }
 
     intervals.push({
       id: `closed-${currentLog.id}`,
       activity: currentLog.activity,
-      start: new Date(previousLog.loggedAt),
+      start: new Date(start),
       end: new Date(currentLog.loggedAt),
       isCurrent: false,
     });
@@ -97,9 +107,17 @@ export function App() {
   const [feedback, setFeedback] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoggingId, setIsLoggingId] = useState<number | null>(null);
+  const [trackingStartedAt, setTrackingStartedAt] = useState<string | null>(() =>
+    localStorage.getItem(trackingStartedAtStorageKey),
+  );
   const [now, setNow] = useState(() => new Date());
 
-  const timelineIntervals = buildTimelineIntervals(timeLogs, now);
+  const timelineIntervals = buildTimelineIntervals(
+    timeLogs,
+    now,
+    trackingStartedAt,
+  );
+  const hasTrackingStarted = trackingStartedAt !== null || timeLogs.length > 0;
 
   useEffect(() => {
     async function loadInitialData() {
@@ -131,6 +149,16 @@ export function App() {
 
     return () => window.clearInterval(intervalId);
   }, []);
+
+  function startTracking() {
+    const startedAt = new Date().toISOString();
+
+    localStorage.setItem(trackingStartedAtStorageKey, startedAt);
+    setTrackingStartedAt(startedAt);
+    setNow(new Date(startedAt));
+    setFeedback(`Tracking started at ${formatTime(new Date(startedAt))}.`);
+    setError("");
+  }
 
   async function createActivity(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -220,6 +248,25 @@ export function App() {
           </div>
         </header>
 
+        {!hasTrackingStarted ? (
+          <section className="space-y-3 rounded-md border border-cyan-700 bg-cyan-950/40 px-4 py-4">
+            <div className="space-y-1">
+              <h2 className="text-lg font-semibold">Start tracking</h2>
+              <p className="text-sm leading-6 text-cyan-100">
+                Press this once when you want Chronolog to begin counting time.
+              </p>
+            </div>
+
+            <button
+              className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950"
+              onClick={startTracking}
+              type="button"
+            >
+              Start tracking
+            </button>
+          </section>
+        ) : null}
+
         <form className="space-y-4" onSubmit={createActivity}>
           <label className="block space-y-2">
             <span className="text-sm font-medium text-zinc-200">Name</span>
@@ -304,7 +351,9 @@ export function App() {
 
           {timelineIntervals.length === 0 ? (
             <p className="rounded-md border border-dashed border-zinc-700 px-4 py-5 text-sm text-zinc-400">
-              Log an activity to start the timeline.
+              {hasTrackingStarted
+                ? "Log an activity to create your first interval."
+                : "Start tracking to begin the timeline."}
             </p>
           ) : (
             <ul className="space-y-3">
