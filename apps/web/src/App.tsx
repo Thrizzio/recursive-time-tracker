@@ -58,6 +58,17 @@ function formatDuration(start: Date, end: Date) {
   return `${hours} hr ${remainingMinutes} min`;
 }
 
+function formatElapsedTime(start: Date, end: Date) {
+  const totalSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  return [hours, minutes, seconds]
+    .map((value) => value.toString().padStart(2, "0"))
+    .join(":");
+}
+
 function buildTimelineIntervals(
   logs: TimeLog[],
   now: Date,
@@ -98,6 +109,10 @@ function buildTimelineIntervals(
   return intervals.reverse();
 }
 
+function getLastLogBoundary(logs: TimeLog[], trackingStartedAt: string | null) {
+  return logs.at(-1)?.loggedAt ?? trackingStartedAt;
+}
+
 export function App() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
@@ -118,6 +133,10 @@ export function App() {
     trackingStartedAt,
   );
   const hasTrackingStarted = trackingStartedAt !== null || timeLogs.length > 0;
+  const lastLogBoundary = getLastLogBoundary(timeLogs, trackingStartedAt);
+  const timeSinceLastLog = lastLogBoundary
+    ? formatElapsedTime(new Date(lastLogBoundary), now)
+    : "00:00:00";
 
   useEffect(() => {
     async function loadInitialData() {
@@ -145,7 +164,7 @@ export function App() {
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       setNow(new Date());
-    }, 60000);
+    }, 1000);
 
     return () => window.clearInterval(intervalId);
   }, []);
@@ -196,6 +215,7 @@ export function App() {
     setError("");
     setFeedback("");
     setIsLoggingId(activity.id);
+    const logStartedAt = lastLogBoundary ? new Date(lastLogBoundary) : null;
 
     try {
       const response = await fetch(`${apiUrl}/time-logs`, {
@@ -225,7 +245,12 @@ export function App() {
         },
       ]);
       setNow(new Date());
-      setFeedback(`Logged ${activity.name} at ${formatTime(new Date(data.loggedAt))}.`);
+      const loggedAt = new Date(data.loggedAt);
+      const elapsed = logStartedAt ? formatDuration(logStartedAt, loggedAt) : "0 min";
+
+      setFeedback(
+        `Logged ${elapsed} as ${activity.name} at ${formatTime(loggedAt)}.`,
+      );
     } catch {
       setError("Could not log activity.");
     } finally {
@@ -264,6 +289,27 @@ export function App() {
             >
               Start tracking
             </button>
+          </section>
+        ) : null}
+
+        {hasTrackingStarted ? (
+          <section className="rounded-md border border-zinc-800 bg-zinc-900 px-4 py-4">
+            <div className="flex items-end justify-between gap-4">
+              <div className="space-y-1">
+                <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-400">
+                  Since last log
+                </h2>
+                <p className="text-4xl font-semibold tabular-nums text-zinc-50">
+                  {timeSinceLastLog}
+                </p>
+              </div>
+
+              <p className="pb-1 text-right text-sm text-zinc-400">
+                {lastLogBoundary
+                  ? `Started ${formatTime(new Date(lastLogBoundary))}`
+                  : "Waiting to start"}
+              </p>
+            </div>
           </section>
         ) : null}
 
@@ -327,7 +373,7 @@ export function App() {
 
                   <button
                     className="rounded-md bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={isLoggingId === activity.id}
+                    disabled={!hasTrackingStarted || isLoggingId === activity.id}
                     onClick={() => logActivity(activity)}
                     type="button"
                   >
