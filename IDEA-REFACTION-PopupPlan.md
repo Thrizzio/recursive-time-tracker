@@ -1,0 +1,1 @@
+There should be a popup box everytime we log , that then lets us choose the activities we think we did since the last log , which would then open up another popup box with a slider that allows us to pick the percentage of what activities we think we did.
