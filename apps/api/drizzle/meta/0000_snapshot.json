@@ -1,5 +1,5 @@
 {
-  "id": "c9a2f363-d475-41ac-a35b-50d72b9c1840",
+  "id": "ea9a673f-9a14-4523-bd6c-fb1c6d64ad26",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -42,8 +42,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.time_logs": {
-      "name": "time_logs",
+    "public.time_block_entries": {
+      "name": "time_block_entries",
       "schema": "",
       "columns": {
         "id": {
@@ -52,32 +52,43 @@
           "primaryKey": true,
           "notNull": true
         },
+        "time_block_id": {
+          "name": "time_block_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
         "activity_id": {
           "name": "activity_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
-        "logged_at": {
-          "name": "logged_at",
-          "type": "timestamp with time zone",
+        "percentage": {
+          "name": "percentage",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
+          "notNull": true
         }
       },
       "indexes": {},
       "foreignKeys": {
-        "time_logs_activity_id_activities_id_fk": {
-          "name": "time_logs_activity_id_activities_id_fk",
-          "tableFrom": "time_logs",
+        "time_block_entries_time_block_id_time_blocks_id_fk": {
+          "name": "time_block_entries_time_block_id_time_blocks_id_fk",
+          "tableFrom": "time_block_entries",
+          "tableTo": "time_blocks",
+          "columnsFrom": [
+            "time_block_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "time_block_entries_activity_id_activities_id_fk": {
+          "name": "time_block_entries_activity_id_activities_id_fk",
+          "tableFrom": "time_block_entries",
           "tableTo": "activities",
           "columnsFrom": [
             "activity_id"
@@ -89,6 +100,44 @@
           "onUpdate": "no action"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.time_blocks": {
+      "name": "time_blocks",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "start_time": {
+          "name": "start_time",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end_time": {
+          "name": "end_time",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},

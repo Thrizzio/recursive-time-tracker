@@ -7,11 +7,20 @@ export const activities = pgTable("activities", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
-export const timeLogs = pgTable("time_logs", {
+export const timeBlocks = pgTable("time_blocks", {
   id: serial("id").primaryKey(),
+  startTime: timestamp("start_time", { withTimezone: true }).notNull(),
+  endTime: timestamp("end_time", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const activityAllocations = pgTable("time_block_entries", {
+  id: serial("id").primaryKey(),
+  timeBlockId: integer("time_block_id")
+    .notNull()
+    .references(() => timeBlocks.id),
   activityId: integer("activity_id")
     .notNull()
     .references(() => activities.id),
-  loggedAt: timestamp("logged_at", { withTimezone: true }).defaultNow().notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  percentage: integer("percentage").notNull(),
 });
