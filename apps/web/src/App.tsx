@@ -68,6 +68,23 @@ function formatElapsedTime(start: Date, end: Date) {
     .join(":");
 }
 
+function formatElapsedHoursMinutes(start: Date, end: Date) {
+  const totalSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  if (hours === 0 && minutes === 0) {
+    return "less than a minute";
+  }
+  if (hours === 0) {
+    return `${minutes}m`;
+  }
+  if (minutes === 0) {
+    return `${hours}h`;
+  }
+  return `${hours}h ${minutes}m`;
+}
+
 function buildTimelineIntervals(logs: TimeLog[], trackingStartedAt: string | null) {
   const intervals: TimelineInterval[] = [];
 
@@ -108,6 +125,9 @@ export function App() {
     localStorage.getItem(trackingStartedAtStorageKey),
   );
   const [now, setNow] = useState(() => new Date());
+  const [isLogModalOpen, setIsLogModalOpen] = useState(false);
+  const [selectedActivityIds, setSelectedActivityIds] = useState<number[]>([]);
+  const [modalElapsedText, setModalElapsedText] = useState("");
 
   const timelineIntervals = buildTimelineIntervals(timeLogs, trackingStartedAt);
   const hasTrackingStarted = trackingStartedAt !== null || timeLogs.length > 0;
@@ -236,6 +256,31 @@ export function App() {
     }
   }
 
+  function handleOpenLogDialog() {
+    if (!lastLogBoundary) return;
+    const elapsed = formatElapsedHoursMinutes(new Date(lastLogBoundary), now);
+    setModalElapsedText(elapsed);
+    setSelectedActivityIds([]);
+    setIsLogModalOpen(true);
+  }
+
+  function handleCloseLogDialog() {
+    setIsLogModalOpen(false);
+    setSelectedActivityIds([]);
+  }
+
+  function handleContinueLogDialog() {
+    setIsLogModalOpen(false);
+  }
+
+  function handleToggleActivity(activityId: number) {
+    setSelectedActivityIds((prev) =>
+      prev.includes(activityId)
+        ? prev.filter((id) => id !== activityId)
+        : [...prev, activityId]
+    );
+  }
+
   return (
     <main className="min-h-screen bg-zinc-950 px-5 py-8 text-zinc-50">
       <section className="mx-auto flex max-w-md flex-col gap-7">
@@ -288,6 +333,14 @@ export function App() {
                   : "Waiting to start"}
               </p>
             </div>
+
+            <button
+              className="mt-4 w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 hover:bg-cyan-200 transition-all duration-150 active:scale-98 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={handleOpenLogDialog}
+              type="button"
+            >
+              Log Activity
+            </button>
           </section>
         ) : null}
 
@@ -348,15 +401,6 @@ export function App() {
                     />
                     <span className="truncate font-medium">{activity.name}</span>
                   </div>
-
-                  <button
-                    className="rounded-md bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={!hasTrackingStarted || isLoggingId === activity.id}
-                    onClick={() => logActivity(activity)}
-                    type="button"
-                  >
-                    {isLoggingId === activity.id ? "Logging..." : "Log"}
-                  </button>
                 </li>
               ))}
             </ul>
@@ -413,6 +457,71 @@ export function App() {
           )}
         </section>
       </section>
+
+      {isLogModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-md p-4">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/95 p-6 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200">
+            <h2 className="text-xl font-bold text-zinc-50 leading-tight mb-2">
+              How did you spend the last {modalElapsedText}?
+            </h2>
+            <p className="text-sm text-zinc-400 mb-6">
+              Select one or more activities to attribute this time block to.
+            </p>
+
+            <div className="space-y-2 max-h-60 overflow-y-auto mb-6 pr-1 custom-scrollbar">
+              {activities.length === 0 ? (
+                <p className="rounded-md border border-dashed border-zinc-700 px-4 py-5 text-sm text-zinc-400 text-center">
+                  No activities saved yet.
+                </p>
+              ) : (
+                activities.map((activity) => {
+                  const isChecked = selectedActivityIds.includes(activity.id);
+                  return (
+                    <label
+                      key={activity.id}
+                      className="flex items-center justify-between p-3.5 rounded-xl border border-zinc-850 bg-zinc-950/60 hover:bg-zinc-800/40 hover:border-zinc-700/60 cursor-pointer select-none transition-all duration-150"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span
+                          className="h-3.5 w-3.5 flex-none rounded-full"
+                          style={{ backgroundColor: activity.color }}
+                        />
+                        <span className="truncate font-medium text-zinc-200">
+                          {activity.name}
+                        </span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => handleToggleActivity(activity.id)}
+                        className="h-5 w-5 rounded border-zinc-700 bg-zinc-900 text-cyan-400 focus:ring-cyan-400 focus:ring-offset-zinc-900 cursor-pointer accent-cyan-400"
+                      />
+                    </label>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-zinc-800/60 pt-4">
+              <button
+                type="button"
+                onClick={handleCloseLogDialog}
+                className="rounded-xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800 px-5 py-2.5 text-sm font-semibold text-zinc-300 hover:text-zinc-50 transition-all active:scale-97 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleContinueLogDialog}
+                disabled={selectedActivityIds.length === 0}
+                className="rounded-xl bg-cyan-300 hover:bg-cyan-200 disabled:opacity-40 disabled:hover:bg-cyan-300 disabled:cursor-not-allowed px-5 py-2.5 text-sm font-bold text-zinc-950 transition-all active:scale-97 cursor-pointer"
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
