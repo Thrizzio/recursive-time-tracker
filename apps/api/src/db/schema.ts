@@ -14,7 +14,7 @@ export const timeBlocks = pgTable("time_blocks", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
-export const activityAllocations = pgTable("time_block_entries", {
+export const activity_allocations = pgTable("activity_allocations", {
   id: serial("id").primaryKey(),
   timeBlockId: integer("time_block_id")
     .notNull()
