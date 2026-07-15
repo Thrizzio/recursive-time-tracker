@@ -204,6 +204,93 @@ app.post("/time-blocks", async (request, response) => {
   }
 });
 
+// ─── GET /time-blocks ────────────────────────────────────────────────────────
+//
+// Returns all time blocks with their allocations and activity details.
+// A single three-way join avoids N+1.  Rows are grouped in memory.
+// Ordered newest first (desc by start_time).
+
+app.get("/time-blocks", async (_request, response) => {
+  try {
+    // One query — left join so a block with no allocations still appears
+    const rows = await db
+      .select({
+        blockId: timeBlocks.id,
+        blockStartTime: timeBlocks.startTime,
+        blockEndTime: timeBlocks.endTime,
+        blockCreatedAt: timeBlocks.createdAt,
+        allocId: activity_allocations.id,
+        allocPct: activity_allocations.percentage,
+        actId: activities.id,
+        actName: activities.name,
+        actColor: activities.color,
+      })
+      .from(timeBlocks)
+      .leftJoin(
+        activity_allocations,
+        eq(activity_allocations.timeBlockId, timeBlocks.id),
+      )
+      .leftJoin(
+        activities,
+        eq(activities.id, activity_allocations.activityId),
+      )
+      .orderBy(desc(timeBlocks.startTime));
+
+    // Group flat rows → hierarchical blocks
+    const blockMap = new Map<number, {
+      id: number;
+      startTime: Date;
+      endTime: Date;
+      createdAt: Date;
+      elapsedSeconds: number;
+      allocations: Array<{
+        id: number;
+        activityId: number;
+        percentage: number;
+        durationSeconds: number;
+        activity: { id: number; name: string; color: string };
+      }>;
+    }>();
+
+    for (const row of rows) {
+      if (!blockMap.has(row.blockId)) {
+        const elapsed = Math.round(
+          (row.blockEndTime.getTime() - row.blockStartTime.getTime()) / 1000,
+        );
+        blockMap.set(row.blockId, {
+          id: row.blockId,
+          startTime: row.blockStartTime,
+          endTime: row.blockEndTime,
+          createdAt: row.blockCreatedAt,
+          elapsedSeconds: elapsed,
+          allocations: [],
+        });
+      }
+
+      // A block might legitimately have no allocations (left join returns nulls)
+      if (row.allocId !== null && row.actId !== null) {
+        const block = blockMap.get(row.blockId)!;
+        const durationSeconds = Math.round(
+          ((row.allocPct ?? 0) / 100) * block.elapsedSeconds,
+        );
+        block.allocations.push({
+          id: row.allocId,
+          activityId: row.actId,
+          percentage: row.allocPct ?? 0,
+          durationSeconds,
+          activity: { id: row.actId, name: row.actName!, color: row.actColor! },
+        });
+      }
+    }
+
+    // Already in desc(startTime) order from the query; Map preserves insertion order
+    response.json([...blockMap.values()]);
+  } catch (err) {
+    console.error("Failed to fetch time blocks:", err);
+    response.status(500).json({ error: "Could not fetch time blocks." });
+  }
+});
+
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 app.listen(port, () => {

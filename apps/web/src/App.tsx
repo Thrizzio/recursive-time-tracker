@@ -1,4 +1,10 @@
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,27 +20,29 @@ type Allocation = {
   percentage: number; // integer 0–100; all allocations sum to exactly 100
 };
 
-/** Shape returned by POST /time-blocks */
-type TimeBlock = {
+/** One allocation row inside a TimeBlockFull (from GET or POST /time-blocks) */
+type BlockAllocation = {
+  id: number;
+  activityId: number;
+  percentage: number;
+  durationSeconds: number;
+  activity: { id: number; name: string; color: string };
+};
+
+/** Full time block with nested allocations — returned by both GET and POST /time-blocks */
+type TimeBlockFull = {
   id: number;
   startTime: string;
   endTime: string;
   createdAt: string;
   elapsedSeconds: number;
-  allocations: Array<{
-    id: number;
-    activityId: number;
-    percentage: number;
-    durationSeconds: number;
-    activity: Activity;
-  }>;
+  allocations: BlockAllocation[];
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const trackingStartedAtStorageKey = "chronolog.trackingStartedAt";
-/** Minimum segment size in percentage points — prevents a segment from disappearing entirely. */
 const MIN_SEGMENT_PCT = 2;
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
@@ -61,6 +69,11 @@ function formatMinutes(totalMinutes: number) {
   return `${h}h ${m}m`;
 }
 
+/** Format a raw second count as "3h 20m", "45m", "1h", etc. */
+function formatSeconds(totalSeconds: number) {
+  return formatMinutes(totalSeconds / 60);
+}
+
 function formatElapsedHumanShort(start: Date, end: Date) {
   const totalSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
   const h = Math.floor(totalSeconds / 3600);
@@ -71,10 +84,6 @@ function formatElapsedHumanShort(start: Date, end: Date) {
   return `${h}h ${m}m`;
 }
 
-/**
- * Seed equal-split allocations. Integer arithmetic: remainder goes to first.
- * e.g. 3 activities → [34, 33, 33]
- */
 function buildEqualAllocations(activityIds: number[]): Allocation[] {
   const n = activityIds.length;
   if (n === 0) return [];
@@ -86,14 +95,6 @@ function buildEqualAllocations(activityIds: number[]): Allocation[] {
   }));
 }
 
-/**
- * Given the current allocations, move divider at index `dividerIndex`
- * (the boundary between segment[dividerIndex] and segment[dividerIndex+1])
- * by `deltaPct` percentage points.
- *
- * Only the two neighbouring segments change. All others are untouched.
- * Min segment size is enforced via MIN_SEGMENT_PCT.
- */
 function moveDivider(
   allocations: Allocation[],
   dividerIndex: number,
@@ -103,10 +104,8 @@ function moveDivider(
   const right = allocations[dividerIndex + 1];
   if (!left || !right) return allocations;
 
-  // How far can we actually move?
-  const maxIncrease = right.percentage - MIN_SEGMENT_PCT; // left grows at right's expense
-  const maxDecrease = left.percentage - MIN_SEGMENT_PCT;  // left shrinks at right's expense
-
+  const maxIncrease = right.percentage - MIN_SEGMENT_PCT;
+  const maxDecrease = left.percentage - MIN_SEGMENT_PCT;
   const actualDelta = Math.max(-maxDecrease, Math.min(maxIncrease, deltaPct));
 
   if (actualDelta === 0) return allocations;
@@ -118,121 +117,6 @@ function moveDivider(
   });
 }
 
-// ─── AllocationBar ────────────────────────────────────────────────────────────
-
-type AllocationBarProps = {
-  activities: Activity[];
-  allocations: Allocation[]; // must be same length as activities, in same order
-  onChange: (updated: Allocation[]) => void;
-};
-
-/**
- * A single horizontal bar divided into coloured segments.
- * Each divider between adjacent segments is draggable.
- * Only the two neighbouring segments change when a divider moves.
- */
-export function AllocationBar({ activities, allocations, onChange }: AllocationBarProps) {
-  const barRef = useRef<HTMLDivElement>(null);
-  // Which divider (0 = between seg 0 and seg 1) is being dragged, or null.
-  const dragging = useRef<{
-    dividerIndex: number;
-    startX: number;
-    startAllocations: Allocation[];
-  } | null>(null);
-
-  const activityMap = Object.fromEntries(activities.map((a) => [a.id, a]));
-
-  // Convert a pixel delta to a percentage delta based on bar width.
-  function pctFromPixelDelta(deltaX: number): number {
-    const bar = barRef.current;
-    if (!bar) return 0;
-    const width = bar.getBoundingClientRect().width;
-    return (deltaX / width) * 100;
-  }
-
-  const onPointerDown = useCallback(
-    (dividerIndex: number) => (e: React.PointerEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      e.stopPropagation();
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      dragging.current = {
-        dividerIndex,
-        startX: e.clientX,
-        startAllocations: allocations,
-      };
-    },
-    [allocations],
-  );
-
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!dragging.current) return;
-      const { dividerIndex, startX, startAllocations } = dragging.current;
-      const deltaPct = pctFromPixelDelta(e.clientX - startX);
-      const rounded = Math.round(deltaPct);
-      if (rounded === 0) return;
-      const updated = moveDivider(startAllocations, dividerIndex, rounded);
-      onChange(updated);
-      // Update the reference point so dragging feels anchored
-      dragging.current = {
-        dividerIndex,
-        startX: e.clientX,
-        startAllocations: updated,
-      };
-    },
-    [onChange],
-  );
-
-  const onPointerUp = useCallback(() => {
-    dragging.current = null;
-  }, []);
-
-  // Segments, rendered as adjacent flex children that share the full bar width.
-  const segments = allocations.map((alloc) => activityMap[alloc.activityId]);
-
-  return (
-    <div>
-      {/* ── The bar itself ─────────────────────────────────────────────── */}
-      <div
-        ref={barRef}
-        className="relative flex h-10 w-full overflow-hidden rounded-xl touch-none select-none"
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-      >
-        {allocations.map((alloc, i) => {
-          const activity = segments[i];
-          if (!activity) return null;
-          const isLast = i === allocations.length - 1;
-
-          return (
-            <div
-              key={alloc.activityId}
-              className="relative h-full transition-none"
-              style={{ width: `${alloc.percentage}%`, backgroundColor: activity.color }}
-            >
-              {/* Divider handle — only between adjacent segments, not after the last */}
-              {!isLast ? (
-                <div
-                  className="absolute right-0 top-0 bottom-0 z-10 flex items-center justify-center"
-                  style={{ width: "18px", transform: "translateX(50%)", cursor: "col-resize" }}
-                  onPointerDown={onPointerDown(i)}
-                >
-                  {/* Visual grip pip */}
-                  <div className="h-6 w-1.5 rounded-full bg-zinc-900/70 shadow-sm" />
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* ── Legend ─────────────────────────────────────────────────────── */}
-      {/* Rendered by parent; AllocationBar keeps itself pure */}
-    </div>
-  );
-}
-
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 type ModalView = "select" | "allocate";
@@ -240,6 +124,9 @@ type ModalView = "select" | "allocate";
 export function App() {
   // Core data
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [timeBlocks, setTimeBlocks] = useState<TimeBlockFull[]>([]);
+  const [timeBlocksLoading, setTimeBlocksLoading] = useState(true);
+  const [timeBlocksError, setTimeBlocksError] = useState("");
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
 
@@ -272,13 +159,34 @@ export function App() {
   const timeSinceBoundary = boundary ? formatElapsedClock(boundary, now) : "00:00:00";
   const boundaryLabel = boundary ? `Started ${formatTime(boundary)}` : "Waiting to start";
 
-  // ── Effects ──────────────────────────────────────────────────────────────
+  // ── Fetch helpers ─────────────────────────────────────────────────────────
+
+  async function fetchActivities() {
+    const res = await fetch(`${apiUrl}/activities`);
+    const data = (await res.json()) as Activity[];
+    setActivities(data);
+  }
+
+  async function fetchTimeBlocks() {
+    setTimeBlocksLoading(true);
+    setTimeBlocksError("");
+    try {
+      const res = await fetch(`${apiUrl}/time-blocks`);
+      if (!res.ok) throw new Error("Server error");
+      const data = (await res.json()) as TimeBlockFull[];
+      setTimeBlocks(data);
+    } catch {
+      setTimeBlocksError("Could not load time blocks.");
+    } finally {
+      setTimeBlocksLoading(false);
+    }
+  }
+
+  // ── Effects ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    fetch(`${apiUrl}/activities`)
-      .then((r) => r.json() as Promise<Activity[]>)
-      .then(setActivities)
-      .catch(() => setError("Could not load activities."));
+    fetchActivities().catch(() => setError("Could not load activities."));
+    fetchTimeBlocks();
   }, []);
 
   useEffect(() => {
@@ -333,6 +241,7 @@ export function App() {
     setModalTotalMinutes(Math.max(0, (now.getTime() - boundary.getTime()) / 60000));
     setSelectedActivityIds([]);
     setAllocations([]);
+    setModalError("");
     setModalView("select");
     setIsModalOpen(true);
   }
@@ -360,7 +269,7 @@ export function App() {
   // ── Log dialog — Step 2 (allocate) ───────────────────────────────────────
 
   async function handleSave() {
-    if (isSaving) return; // guard against double-tap
+    if (isSaving) return;
     setIsSaving(true);
     setModalError("");
 
@@ -376,24 +285,27 @@ export function App() {
         }),
       });
 
-      const data = (await response.json()) as TimeBlock | { error: string };
+      const data = (await response.json()) as TimeBlockFull | { error: string };
 
       if (!response.ok) {
-        // Keep modal open; show the server's error message
         setModalError((data as { error: string }).error ?? "Could not save. Please try again.");
         return;
       }
 
-      const block = data as TimeBlock;
+      const block = data as TimeBlockFull;
 
-      // Advance the tracking boundary to the server's end_time so the
-      // next elapsed-time counter starts from exactly when this block ended.
+      // Advance tracking boundary to the server's authoritative end_time
       localStorage.setItem(trackingStartedAtStorageKey, block.endTime);
       setTrackingStartedAt(block.endTime);
       setNow(new Date(block.endTime));
 
+      // Refresh timeline — prepend the new block (it's the newest)
+      setTimeBlocks((prev) => [block, ...prev]);
+
       closeModal();
-      setFeedback(`Saved — ${block.elapsedSeconds}s logged across ${block.allocations.length} activit${block.allocations.length === 1 ? "y" : "ies"}.`);
+      setFeedback(
+        `Saved — ${formatSeconds(block.elapsedSeconds)} logged across ${block.allocations.length} activit${block.allocations.length === 1 ? "y" : "ies"}.`,
+      );
       setError("");
     } catch {
       setModalError("Network error. Check your connection and try again.");
@@ -402,29 +314,25 @@ export function App() {
     }
   }
 
-  // ─── Render ──────────────────────────────────────────────────────────────
+  // ── Derived for AllocateView ───────────────────────────────────────────────
 
-  // Derive the ordered activity list that matches the current allocations order.
   const selectedActivities = allocations
     .map((a) => activities.find((act) => act.id === a.activityId))
     .filter((a): a is Activity => a !== undefined);
 
+  // ─── Render ────────────────────────────────────────────────────────────────
+
   return (
     <main className="min-h-screen bg-zinc-950 px-5 py-8 text-zinc-50">
-      <section className="mx-auto flex max-w-md flex-col gap-7">
+      <section className="mx-auto flex max-w-md flex-col gap-8">
 
-        {/* Header */}
-        <header className="space-y-3">
+        {/* ── Header ─────────────────────────────────────────────────────── */}
+        <header className="space-y-2">
           <p className="text-sm font-medium uppercase tracking-wide text-cyan-300">Chronolog</p>
-          <div className="space-y-2">
-            <h1 className="text-3xl font-semibold leading-tight">Activities</h1>
-            <p className="text-base leading-7 text-zinc-300">
-              Create the activities you want to track before logging time.
-            </p>
-          </div>
+          <h1 className="text-3xl font-semibold leading-tight">Time Tracker</h1>
         </header>
 
-        {/* Start tracking CTA */}
+        {/* ── Start tracking CTA ─────────────────────────────────────────── */}
         {!hasTrackingStarted ? (
           <section className="space-y-3 rounded-md border border-cyan-700 bg-cyan-950/40 px-4 py-4">
             <div className="space-y-1">
@@ -434,7 +342,7 @@ export function App() {
               </p>
             </div>
             <button
-              className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950"
+              className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 hover:bg-cyan-200 transition-colors"
               onClick={startTracking}
               type="button"
             >
@@ -443,7 +351,7 @@ export function App() {
           </section>
         ) : null}
 
-        {/* Live timer + Log Activity */}
+        {/* ── Live timer + Log Activity ────────────────────────────────────── */}
         {hasTrackingStarted ? (
           <section className="rounded-md border border-zinc-800 bg-zinc-900 px-4 py-4">
             <div className="flex items-end justify-between gap-4">
@@ -467,49 +375,62 @@ export function App() {
           </section>
         ) : null}
 
-        {/* Create activity form */}
-        <form className="space-y-4" onSubmit={createActivity}>
-          <label className="block space-y-2">
-            <span className="text-sm font-medium text-zinc-200">Name</span>
-            <input
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-3 text-base text-zinc-50 outline-none focus:border-cyan-300"
-              maxLength={100}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Study"
-              value={name}
-            />
-          </label>
-          <label className="block space-y-2">
-            <span className="text-sm font-medium text-zinc-200">Color</span>
-            <input
-              className="h-12 w-20 rounded-md border border-zinc-700 bg-zinc-900 p-1"
-              onChange={(e) => setColor(e.target.value)}
-              type="color"
-              value={color}
-            />
-          </label>
-
-          {error ? <p className="text-sm text-red-300">{error}</p> : null}
-          {feedback ? <p className="text-sm text-emerald-300">{feedback}</p> : null}
-
-          <button
-            className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={isSubmitting}
-            type="submit"
-          >
-            {isSubmitting ? "Adding…" : "Add activity"}
-          </button>
-        </form>
-
-        {/* Saved activities */}
+        {/* ── Timeline ────────────────────────────────────────────────────── */}
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold">Saved activities</h2>
+          <h2 className="text-lg font-semibold">Today's blocks</h2>
+          <Timeline
+            blocks={timeBlocks}
+            loading={timeBlocksLoading}
+            error={timeBlocksError}
+          />
+        </section>
+
+        {/* ── Create activity form ────────────────────────────────────────── */}
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold">Activities</h2>
+          <p className="text-sm text-zinc-400">
+            Create the activities you want to track before logging time.
+          </p>
+          <form className="space-y-4" onSubmit={createActivity}>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-zinc-200">Name</span>
+              <input
+                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-3 text-base text-zinc-50 outline-none focus:border-cyan-300"
+                maxLength={100}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Study"
+                value={name}
+              />
+            </label>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-zinc-200">Color</span>
+              <input
+                className="h-12 w-20 rounded-md border border-zinc-700 bg-zinc-900 p-1"
+                onChange={(e) => setColor(e.target.value)}
+                type="color"
+                value={color}
+              />
+            </label>
+
+            {error ? <p className="text-sm text-red-300">{error}</p> : null}
+            {feedback ? <p className="text-sm text-emerald-300">{feedback}</p> : null}
+
+            <button
+              className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSubmitting}
+              type="submit"
+            >
+              {isSubmitting ? "Adding…" : "Add activity"}
+            </button>
+          </form>
+
+          {/* Saved activities list */}
           {activities.length === 0 ? (
             <p className="rounded-md border border-dashed border-zinc-700 px-4 py-5 text-sm text-zinc-400">
               No activities yet.
             </p>
           ) : (
-            <ul className="space-y-3">
+            <ul className="space-y-2">
               {activities.map((activity) => (
                 <li
                   className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
@@ -534,7 +455,6 @@ export function App() {
           onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
         >
           <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-
             {modalView === "select" ? (
               <SelectView
                 activities={activities}
@@ -561,6 +481,173 @@ export function App() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+// ─── Timeline ─────────────────────────────────────────────────────────────────
+
+type TimelineProps = {
+  blocks: TimeBlockFull[];
+  loading: boolean;
+  error: string;
+};
+
+function Timeline({ blocks, loading, error }: TimelineProps) {
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        {[1, 2].map((i) => (
+          <div
+            key={i}
+            className="h-16 animate-pulse rounded-xl border border-zinc-800 bg-zinc-800/50"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <p className="rounded-xl border border-red-900 bg-red-950/40 px-4 py-4 text-sm text-red-300">
+        {error}
+      </p>
+    );
+  }
+
+  if (blocks.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-zinc-700 px-5 py-8 text-center">
+        <p className="text-sm font-medium text-zinc-300">No time blocks yet.</p>
+        <p className="mt-1 text-sm text-zinc-500">
+          Log your first retrospective block to begin tracking your day.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {blocks.map((block, index) => (
+        <TimeBlockCard
+          key={block.id}
+          block={block}
+          defaultExpanded={index === 0}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── TimeBlockCard ────────────────────────────────────────────────────────────
+
+type TimeBlockCardProps = {
+  block: TimeBlockFull;
+  defaultExpanded: boolean;
+};
+
+function TimeBlockCard({ block, defaultExpanded }: TimeBlockCardProps) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+
+  const start = new Date(block.startTime);
+  const end = new Date(block.endTime);
+  const timeRange = `${formatTime(start)} → ${formatTime(end)}`;
+  const duration = formatSeconds(block.elapsedSeconds);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
+      {/* ── Header row (always visible) ────────────────────────────────── */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-zinc-800/60 transition-colors"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          {/* Chevron */}
+          <span
+            className={`flex-none text-zinc-500 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+            aria-hidden
+          >
+            <ChevronDownIcon />
+          </span>
+
+          <span className="truncate text-sm font-semibold text-zinc-100">
+            {timeRange}
+          </span>
+        </div>
+
+        {/* Duration badge */}
+        <span className="shrink-0 rounded-md bg-zinc-800 px-2.5 py-1 text-xs font-semibold tabular-nums text-zinc-300">
+          {duration}
+        </span>
+      </button>
+
+      {/* ── Expanded body ───────────────────────────────────────────────── */}
+      {expanded ? (
+        <div className="border-t border-zinc-800 px-4 pb-4 pt-3 space-y-1">
+          {block.allocations.length === 0 ? (
+            <p className="text-xs text-zinc-500">No allocations recorded.</p>
+          ) : (
+            block.allocations.map((alloc) => (
+              <ActivityAllocationRow key={alloc.id} allocation={alloc} />
+            ))
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ─── ActivityAllocationRow ────────────────────────────────────────────────────
+
+type ActivityAllocationRowProps = {
+  allocation: BlockAllocation;
+};
+
+function ActivityAllocationRow({ allocation }: ActivityAllocationRowProps) {
+  const { activity, durationSeconds, percentage } = allocation;
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 hover:bg-zinc-800/50 transition-colors">
+      {/* Color swatch + name */}
+      <div className="flex items-center gap-2.5 min-w-0">
+        <span
+          className="h-2.5 w-2.5 flex-none rounded-full"
+          style={{ backgroundColor: activity.color }}
+        />
+        <span className="truncate text-sm font-medium text-zinc-200">
+          {activity.name}
+        </span>
+      </div>
+
+      {/* Duration + percentage */}
+      <div className="flex items-baseline gap-2.5 shrink-0 tabular-nums">
+        <span className="text-sm font-semibold text-zinc-100">
+          {formatSeconds(durationSeconds)}
+        </span>
+        <span className="text-xs text-zinc-500 w-8 text-right">
+          {percentage}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─── ChevronDownIcon ──────────────────────────────────────────────────────────
+
+function ChevronDownIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="2 5 7 10 12 5" />
+    </svg>
   );
 }
 
@@ -600,12 +687,15 @@ function SelectView({
               <label
                 key={activity.id}
                 className={`flex items-center justify-between gap-3 rounded-xl px-4 py-3 cursor-pointer select-none transition-all duration-100 ${checked
-                  ? "bg-zinc-800 border border-zinc-700"
-                  : "bg-zinc-900/40 border border-transparent hover:bg-zinc-800/50"
+                    ? "bg-zinc-800 border border-zinc-700"
+                    : "bg-zinc-900/40 border border-transparent hover:bg-zinc-800/50"
                   }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="h-3 w-3 flex-none rounded-full" style={{ backgroundColor: activity.color }} />
+                  <span
+                    className="h-3 w-3 flex-none rounded-full"
+                    style={{ backgroundColor: activity.color }}
+                  />
                   <span className="truncate text-sm font-medium text-zinc-200">{activity.name}</span>
                 </div>
                 <input
@@ -646,7 +736,7 @@ function SelectView({
 // ─── AllocateView ─────────────────────────────────────────────────────────────
 
 type AllocateViewProps = {
-  activities: Activity[]; // ordered to match allocations
+  activities: Activity[];
   allocations: Allocation[];
   elapsedText: string;
   totalMinutes: number;
@@ -663,7 +753,6 @@ function AllocateView({
 }: AllocateViewProps) {
   return (
     <div className="flex flex-col">
-      {/* Header */}
       <div className="px-6 pt-6 pb-4">
         <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">
           How was the last
@@ -713,7 +802,7 @@ function AllocateView({
 
       <div className="h-px bg-zinc-800" />
 
-      {/* Inline error message */}
+      {/* Inline error */}
       {saveError ? (
         <p className="mx-6 mt-3 rounded-lg bg-red-950/60 border border-red-800 px-4 py-2.5 text-sm text-red-300">
           {saveError}
@@ -739,6 +828,92 @@ function AllocateView({
           {isSaving ? "Saving…" : "Save"}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ─── AllocationBar ────────────────────────────────────────────────────────────
+
+type AllocationBarProps = {
+  activities: Activity[];
+  allocations: Allocation[];
+  onChange: (updated: Allocation[]) => void;
+};
+
+export function AllocationBar({ activities, allocations, onChange }: AllocationBarProps) {
+  const barRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef<{
+    dividerIndex: number;
+    startX: number;
+    startAllocations: Allocation[];
+  } | null>(null);
+
+  const activityMap = Object.fromEntries(activities.map((a) => [a.id, a]));
+
+  function pctFromPixelDelta(deltaX: number): number {
+    const bar = barRef.current;
+    if (!bar) return 0;
+    const width = bar.getBoundingClientRect().width;
+    return (deltaX / width) * 100;
+  }
+
+  const onPointerDown = useCallback(
+    (dividerIndex: number) => (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      dragging.current = { dividerIndex, startX: e.clientX, startAllocations: allocations };
+    },
+    [allocations],
+  );
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!dragging.current) return;
+      const { dividerIndex, startX, startAllocations } = dragging.current;
+      const deltaPct = pctFromPixelDelta(e.clientX - startX);
+      const rounded = Math.round(deltaPct);
+      if (rounded === 0) return;
+      const updated = moveDivider(startAllocations, dividerIndex, rounded);
+      onChange(updated);
+      dragging.current = { dividerIndex, startX: e.clientX, startAllocations: updated };
+    },
+    [onChange],
+  );
+
+  const onPointerUp = useCallback(() => { dragging.current = null; }, []);
+
+  return (
+    <div
+      ref={barRef}
+      className="relative flex h-10 w-full overflow-hidden rounded-xl touch-none select-none"
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    >
+      {allocations.map((alloc, i) => {
+        const activity = activityMap[alloc.activityId];
+        if (!activity) return null;
+        const isLast = i === allocations.length - 1;
+
+        return (
+          <div
+            key={alloc.activityId}
+            className="relative h-full transition-none"
+            style={{ width: `${alloc.percentage}%`, backgroundColor: activity.color }}
+          >
+            {!isLast ? (
+              <div
+                className="absolute right-0 top-0 bottom-0 z-10 flex items-center justify-center"
+                style={{ width: "18px", transform: "translateX(50%)", cursor: "col-resize" }}
+                onPointerDown={onPointerDown(i)}
+              >
+                <div className="h-6 w-1.5 rounded-full bg-zinc-900/70 shadow-sm" />
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
