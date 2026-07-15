@@ -1,4 +1,12 @@
-import { FormEvent, useEffect, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type Activity = {
   id: number;
@@ -7,199 +15,204 @@ type Activity = {
   createdAt: string;
 };
 
-type TimeLog = {
-  id: number;
+type Allocation = {
   activityId: number;
-  loggedAt: string;
-  createdAt: string;
-  activity: {
-    id: number;
-    name: string;
-    color: string;
-  };
+  percentage: number; // integer 0–100; all allocations sum to exactly 100
 };
 
-type TimelineInterval = {
-  id: string;
-  activity: TimeLog["activity"];
-  start: Date;
-  end: Date;
+/** One allocation row inside a TimeBlockFull (from GET or POST /time-blocks) */
+type BlockAllocation = {
+  id: number;
+  activityId: number;
+  percentage: number;
+  durationSeconds: number;
+  activity: { id: number; name: string; color: string };
 };
+
+/** Full time block with nested allocations — returned by both GET and POST /time-blocks */
+type TimeBlockFull = {
+  id: number;
+  startTime: string;
+  endTime: string;
+  createdAt: string;
+  elapsedSeconds: number;
+  allocations: BlockAllocation[];
+};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const trackingStartedAtStorageKey = "chronolog.trackingStartedAt";
+const MIN_SEGMENT_PCT = 2;
+
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
 
 function formatTime(date: Date) {
-  return date.toLocaleTimeString([], {
-    hour: "numeric",
-    minute: "2-digit",
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function formatElapsedClock(start: Date, end: Date) {
+  const totalSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return [h, m, s].map((v) => v.toString().padStart(2, "0")).join(":");
+}
+
+function formatMinutes(totalMinutes: number) {
+  const mins = Math.round(totalMinutes);
+  if (mins <= 0) return "0m";
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+/** Format a raw second count as "3h 20m", "45m", "1h", etc. */
+function formatSeconds(totalSeconds: number) {
+  return formatMinutes(totalSeconds / 60);
+}
+
+function formatElapsedHumanShort(start: Date, end: Date) {
+  const totalSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  if (h === 0 && m === 0) return "less than a minute";
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+function buildEqualAllocations(activityIds: number[]): Allocation[] {
+  const n = activityIds.length;
+  if (n === 0) return [];
+  const base = Math.floor(100 / n);
+  const remainder = 100 - base * n;
+  return activityIds.map((id, i) => ({
+    activityId: id,
+    percentage: base + (i === 0 ? remainder : 0),
+  }));
+}
+
+function moveDivider(
+  allocations: Allocation[],
+  dividerIndex: number,
+  deltaPct: number,
+): Allocation[] {
+  const left = allocations[dividerIndex];
+  const right = allocations[dividerIndex + 1];
+  if (!left || !right) return allocations;
+
+  const maxIncrease = right.percentage - MIN_SEGMENT_PCT;
+  const maxDecrease = left.percentage - MIN_SEGMENT_PCT;
+  const actualDelta = Math.max(-maxDecrease, Math.min(maxIncrease, deltaPct));
+
+  if (actualDelta === 0) return allocations;
+
+  return allocations.map((a, i) => {
+    if (i === dividerIndex) return { ...a, percentage: a.percentage + actualDelta };
+    if (i === dividerIndex + 1) return { ...a, percentage: a.percentage - actualDelta };
+    return a;
   });
 }
 
-function formatDuration(start: Date, end: Date) {
-  const minutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+// ─── App ─────────────────────────────────────────────────────────────────────
 
-  if (minutes < 1) {
-    return "Less than 1 min";
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-
-  if (hours === 0) {
-    return `${minutes} min`;
-  }
-
-  if (remainingMinutes === 0) {
-    return `${hours} hr`;
-  }
-
-  return `${hours} hr ${remainingMinutes} min`;
-}
-
-function formatElapsedTime(start: Date, end: Date) {
-  const totalSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  return [hours, minutes, seconds]
-    .map((value) => value.toString().padStart(2, "0"))
-    .join(":");
-}
-
-function formatElapsedHoursMinutes(start: Date, end: Date) {
-  const totalSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-
-  if (hours === 0 && minutes === 0) {
-    return "less than a minute";
-  }
-  if (hours === 0) {
-    return `${minutes}m`;
-  }
-  if (minutes === 0) {
-    return `${hours}h`;
-  }
-  return `${hours}h ${minutes}m`;
-}
-
-function buildTimelineIntervals(logs: TimeLog[], trackingStartedAt: string | null) {
-  const intervals: TimelineInterval[] = [];
-
-  for (let index = 0; index < logs.length; index += 1) {
-    const currentLog = logs[index];
-    const previousLog = logs[index - 1];
-    const start = previousLog?.loggedAt ?? trackingStartedAt;
-
-    if (!start) {
-      continue;
-    }
-
-    intervals.push({
-      id: `closed-${currentLog.id}`,
-      activity: currentLog.activity,
-      start: new Date(start),
-      end: new Date(currentLog.loggedAt),
-    });
-  }
-
-  return intervals.reverse();
-}
-
-function getLastLogBoundary(logs: TimeLog[], trackingStartedAt: string | null) {
-  return logs.at(-1)?.loggedAt ?? trackingStartedAt;
-}
+type ModalView = "select" | "allocate";
 
 export function App() {
+  // Core data
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [timeLogs, setTimeLogs] = useState<TimeLog[]>([]);
-  const [name, setName] = useState("");
-  const [color, setColor] = useState("#38bdf8");
+  const [timeBlocks, setTimeBlocks] = useState<TimeBlockFull[]>([]);
+  const [timeBlocksLoading, setTimeBlocksLoading] = useState(true);
+  const [timeBlocksError, setTimeBlocksError] = useState("");
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
+
+  // Activity creation form
+  const [name, setName] = useState("");
+  const [color, setColor] = useState("#38bdf8");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isLoggingId, setIsLoggingId] = useState<number | null>(null);
+
+  // Session / timer
   const [trackingStartedAt, setTrackingStartedAt] = useState<string | null>(() =>
     localStorage.getItem(trackingStartedAtStorageKey),
   );
   const [now, setNow] = useState(() => new Date());
-  const [isLogModalOpen, setIsLogModalOpen] = useState(false);
-  const [selectedActivityIds, setSelectedActivityIds] = useState<number[]>([]);
+
+  // Log dialog — Step 1: select activities
+  const [modalView, setModalView] = useState<ModalView>("select");
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalElapsedText, setModalElapsedText] = useState("");
+  const [modalTotalMinutes, setModalTotalMinutes] = useState(0);
+  const [selectedActivityIds, setSelectedActivityIds] = useState<number[]>([]);
 
-  const timelineIntervals = buildTimelineIntervals(timeLogs, trackingStartedAt);
-  const hasTrackingStarted = trackingStartedAt !== null || timeLogs.length > 0;
-  const lastLogBoundary = getLastLogBoundary(timeLogs, trackingStartedAt);
-  const timeSinceLastLog = lastLogBoundary
-    ? formatElapsedTime(new Date(lastLogBoundary), now)
-    : "00:00:00";
+  // Log dialog — Step 2: allocate percentages
+  const [allocations, setAllocations] = useState<Allocation[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [modalError, setModalError] = useState("");
 
-  useEffect(() => {
-    async function loadInitialData() {
-      const [activitiesResponse, timeLogsResponse] = await Promise.all([
-        fetch(`${apiUrl}/activities`),
-        fetch(`${apiUrl}/time-logs`),
-      ]);
+  // Derived
+  const hasTrackingStarted = trackingStartedAt !== null;
+  const boundary = trackingStartedAt ? new Date(trackingStartedAt) : null;
+  const timeSinceBoundary = boundary ? formatElapsedClock(boundary, now) : "00:00:00";
+  const boundaryLabel = boundary ? `Started ${formatTime(boundary)}` : "Waiting to start";
 
-      if (!activitiesResponse.ok || !timeLogsResponse.ok) {
-        throw new Error("Could not load initial data.");
-      }
+  // ── Fetch helpers ─────────────────────────────────────────────────────────
 
-      const activitiesData = (await activitiesResponse.json()) as Activity[];
-      const timeLogsData = (await timeLogsResponse.json()) as TimeLog[];
-
-      setActivities(activitiesData);
-      setTimeLogs(timeLogsData);
-    }
-
-    loadInitialData().catch(() => {
-      setError("Could not load Chronolog data.");
-    });
-  }, []);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setNow(new Date());
-    }, 1000);
-
-    return () => window.clearInterval(intervalId);
-  }, []);
-
-  function startTracking() {
-    const startedAt = new Date().toISOString();
-
-    localStorage.setItem(trackingStartedAtStorageKey, startedAt);
-    setTrackingStartedAt(startedAt);
-    setNow(new Date(startedAt));
-    setFeedback(`Tracking started at ${formatTime(new Date(startedAt))}.`);
-    setError("");
+  async function fetchActivities() {
+    const res = await fetch(`${apiUrl}/activities`);
+    const data = (await res.json()) as Activity[];
+    setActivities(data);
   }
+
+  async function fetchTimeBlocks() {
+    setTimeBlocksLoading(true);
+    setTimeBlocksError("");
+    try {
+      const res = await fetch(`${apiUrl}/time-blocks`);
+      if (!res.ok) throw new Error("Server error");
+      const data = (await res.json()) as TimeBlockFull[];
+      setTimeBlocks(data);
+    } catch {
+      setTimeBlocksError("Could not load time blocks.");
+    } finally {
+      setTimeBlocksLoading(false);
+    }
+  }
+
+  // ── Effects ───────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    fetchActivities().catch(() => setError("Could not load activities."));
+    fetchTimeBlocks();
+  }, []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // ── Activity creation ─────────────────────────────────────────────────────
 
   async function createActivity(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setFeedback("");
     setIsSubmitting(true);
-
     try {
       const response = await fetch(`${apiUrl}/activities`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, color }),
       });
-
       const data = await response.json();
-
       if (!response.ok) {
         setError(data.error ?? "Could not create activity.");
         return;
       }
-
-      setActivities((currentActivities) => [...currentActivities, data]);
+      setActivities((prev) => [...prev, data]);
       setName("");
       setFeedback(`Created ${data.name}.`);
     } catch {
@@ -209,93 +222,117 @@ export function App() {
     }
   }
 
-  async function logActivity(activity: Activity) {
+  // ── Start tracking ────────────────────────────────────────────────────────
+
+  function startTracking() {
+    const startedAt = new Date().toISOString();
+    localStorage.setItem(trackingStartedAtStorageKey, startedAt);
+    setTrackingStartedAt(startedAt);
+    setNow(new Date(startedAt));
+    setFeedback(`Tracking started at ${formatTime(new Date(startedAt))}.`);
     setError("");
-    setFeedback("");
-    setIsLoggingId(activity.id);
-    const logStartedAt = lastLogBoundary ? new Date(lastLogBoundary) : null;
-
-    try {
-      const response = await fetch(`${apiUrl}/time-logs`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ activityId: activity.id }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.error ?? "Could not log activity.");
-        return;
-      }
-
-      setTimeLogs((currentLogs) => [
-        ...currentLogs,
-        {
-          ...data,
-          activity: {
-            id: activity.id,
-            name: activity.name,
-            color: activity.color,
-          },
-        },
-      ]);
-      setNow(new Date());
-      const loggedAt = new Date(data.loggedAt);
-      const elapsed = logStartedAt ? formatDuration(logStartedAt, loggedAt) : "0 min";
-
-      setFeedback(
-        `Logged ${elapsed} as ${activity.name} at ${formatTime(loggedAt)}.`,
-      );
-    } catch {
-      setError("Could not log activity.");
-    } finally {
-      setIsLoggingId(null);
-    }
   }
 
-  function handleOpenLogDialog() {
-    if (!lastLogBoundary) return;
-    const elapsed = formatElapsedHoursMinutes(new Date(lastLogBoundary), now);
-    setModalElapsedText(elapsed);
+  // ── Log dialog — Step 1 (select) ──────────────────────────────────────────
+
+  function openModal() {
+    if (!boundary) return;
+    setModalElapsedText(formatElapsedHumanShort(boundary, now));
+    setModalTotalMinutes(Math.max(0, (now.getTime() - boundary.getTime()) / 60000));
     setSelectedActivityIds([]);
-    setIsLogModalOpen(true);
+    setAllocations([]);
+    setModalError("");
+    setModalView("select");
+    setIsModalOpen(true);
   }
 
-  function handleCloseLogDialog() {
-    setIsLogModalOpen(false);
+  function closeModal() {
+    setIsModalOpen(false);
     setSelectedActivityIds([]);
+    setAllocations([]);
+    setModalError("");
+    setIsSaving(false);
   }
 
-  function handleContinueLogDialog() {
-    setIsLogModalOpen(false);
-  }
-
-  function handleToggleActivity(activityId: number) {
+  function toggleActivity(activityId: number) {
     setSelectedActivityIds((prev) =>
-      prev.includes(activityId)
-        ? prev.filter((id) => id !== activityId)
-        : [...prev, activityId]
+      prev.includes(activityId) ? prev.filter((id) => id !== activityId) : [...prev, activityId],
     );
   }
 
+  function proceedToAllocate() {
+    setAllocations(buildEqualAllocations(selectedActivityIds));
+    setModalError("");
+    setModalView("allocate");
+  }
+
+  // ── Log dialog — Step 2 (allocate) ───────────────────────────────────────
+
+  async function handleSave() {
+    if (isSaving) return;
+    setIsSaving(true);
+    setModalError("");
+
+    try {
+      const response = await fetch(`${apiUrl}/time-blocks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          allocations: allocations.map((a) => ({
+            activityId: a.activityId,
+            percentage: a.percentage,
+          })),
+        }),
+      });
+
+      const data = (await response.json()) as TimeBlockFull | { error: string };
+
+      if (!response.ok) {
+        setModalError((data as { error: string }).error ?? "Could not save. Please try again.");
+        return;
+      }
+
+      const block = data as TimeBlockFull;
+
+      // Advance tracking boundary to the server's authoritative end_time
+      localStorage.setItem(trackingStartedAtStorageKey, block.endTime);
+      setTrackingStartedAt(block.endTime);
+      setNow(new Date(block.endTime));
+
+      // Refresh timeline — prepend the new block (it's the newest)
+      setTimeBlocks((prev) => [block, ...prev]);
+
+      closeModal();
+      setFeedback(
+        `Saved — ${formatSeconds(block.elapsedSeconds)} logged across ${block.allocations.length} activit${block.allocations.length === 1 ? "y" : "ies"}.`,
+      );
+      setError("");
+    } catch {
+      setModalError("Network error. Check your connection and try again.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  // ── Derived for AllocateView ───────────────────────────────────────────────
+
+  const selectedActivities = allocations
+    .map((a) => activities.find((act) => act.id === a.activityId))
+    .filter((a): a is Activity => a !== undefined);
+
+  // ─── Render ────────────────────────────────────────────────────────────────
+
   return (
     <main className="min-h-screen bg-zinc-950 px-5 py-8 text-zinc-50">
-      <section className="mx-auto flex max-w-md flex-col gap-7">
-        <header className="space-y-3">
-          <p className="text-sm font-medium uppercase tracking-wide text-cyan-300">
-            Chronolog
-          </p>
-          <div className="space-y-2">
-            <h1 className="text-3xl font-semibold leading-tight">Activities</h1>
-            <p className="text-base leading-7 text-zinc-300">
-              Create the activities you want to track before logging time.
-            </p>
-          </div>
+      <section className="mx-auto flex max-w-md flex-col gap-8">
+
+        {/* ── Header ─────────────────────────────────────────────────────── */}
+        <header className="space-y-2">
+          <p className="text-sm font-medium uppercase tracking-wide text-cyan-300">Chronolog</p>
+          <h1 className="text-3xl font-semibold leading-tight">Time Tracker</h1>
         </header>
 
+        {/* ── Start tracking CTA ─────────────────────────────────────────── */}
         {!hasTrackingStarted ? (
           <section className="space-y-3 rounded-md border border-cyan-700 bg-cyan-950/40 px-4 py-4">
             <div className="space-y-1">
@@ -304,9 +341,8 @@ export function App() {
                 Press this once when you want Chronolog to begin counting time.
               </p>
             </div>
-
             <button
-              className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950"
+              className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 hover:bg-cyan-200 transition-colors"
               onClick={startTracking}
               type="button"
             >
@@ -315,6 +351,7 @@ export function App() {
           </section>
         ) : null}
 
+        {/* ── Live timer + Log Activity ────────────────────────────────────── */}
         {hasTrackingStarted ? (
           <section className="rounded-md border border-zinc-800 bg-zinc-900 px-4 py-4">
             <div className="flex items-end justify-between gap-4">
@@ -323,20 +360,14 @@ export function App() {
                   Since last log
                 </h2>
                 <p className="text-4xl font-semibold tabular-nums text-zinc-50">
-                  {timeSinceLastLog}
+                  {timeSinceBoundary}
                 </p>
               </div>
-
-              <p className="pb-1 text-right text-sm text-zinc-400">
-                {lastLogBoundary
-                  ? `Started ${formatTime(new Date(lastLogBoundary))}`
-                  : "Waiting to start"}
-              </p>
+              <p className="pb-1 text-right text-sm text-zinc-400">{boundaryLabel}</p>
             </div>
-
             <button
-              className="mt-4 w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 hover:bg-cyan-200 transition-all duration-150 active:scale-98 disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={handleOpenLogDialog}
+              className="mt-4 w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 hover:bg-cyan-200 transition-colors duration-150 active:scale-[0.98]"
+              onClick={openModal}
               type="button"
             >
               Log Activity
@@ -344,113 +375,72 @@ export function App() {
           </section>
         ) : null}
 
-        <form className="space-y-4" onSubmit={createActivity}>
-          <label className="block space-y-2">
-            <span className="text-sm font-medium text-zinc-200">Name</span>
-            <input
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-3 text-base text-zinc-50 outline-none focus:border-cyan-300"
-              maxLength={100}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Study"
-              value={name}
-            />
-          </label>
-
-          <label className="block space-y-2">
-            <span className="text-sm font-medium text-zinc-200">Color</span>
-            <input
-              className="h-12 w-20 rounded-md border border-zinc-700 bg-zinc-900 p-1"
-              onChange={(event) => setColor(event.target.value)}
-              type="color"
-              value={color}
-            />
-          </label>
-
-          {error ? <p className="text-sm text-red-300">{error}</p> : null}
-          {feedback ? (
-            <p className="text-sm text-emerald-300">{feedback}</p>
-          ) : null}
-
-          <button
-            className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={isSubmitting}
-            type="submit"
-          >
-            {isSubmitting ? "Adding..." : "Add activity"}
-          </button>
-        </form>
-
+        {/* ── Timeline ────────────────────────────────────────────────────── */}
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold">Saved activities</h2>
+          <h2 className="text-lg font-semibold">Today's blocks</h2>
+          <Timeline
+            blocks={timeBlocks}
+            loading={timeBlocksLoading}
+            error={timeBlocksError}
+          />
+        </section>
 
+        {/* ── Create activity form ────────────────────────────────────────── */}
+        <section className="space-y-4">
+          <h2 className="text-lg font-semibold">Activities</h2>
+          <p className="text-sm text-zinc-400">
+            Create the activities you want to track before logging time.
+          </p>
+          <form className="space-y-4" onSubmit={createActivity}>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-zinc-200">Name</span>
+              <input
+                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-3 text-base text-zinc-50 outline-none focus:border-cyan-300"
+                maxLength={100}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Study"
+                value={name}
+              />
+            </label>
+            <label className="block space-y-2">
+              <span className="text-sm font-medium text-zinc-200">Color</span>
+              <input
+                className="h-12 w-20 rounded-md border border-zinc-700 bg-zinc-900 p-1"
+                onChange={(e) => setColor(e.target.value)}
+                type="color"
+                value={color}
+              />
+            </label>
+
+            {error ? <p className="text-sm text-red-300">{error}</p> : null}
+            {feedback ? <p className="text-sm text-emerald-300">{feedback}</p> : null}
+
+            <button
+              className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSubmitting}
+              type="submit"
+            >
+              {isSubmitting ? "Adding…" : "Add activity"}
+            </button>
+          </form>
+
+          {/* Saved activities list */}
           {activities.length === 0 ? (
             <p className="rounded-md border border-dashed border-zinc-700 px-4 py-5 text-sm text-zinc-400">
               No activities yet.
             </p>
           ) : (
-            <ul className="space-y-3">
+            <ul className="space-y-2">
               {activities.map((activity) => (
                 <li
-                  className="flex items-center justify-between gap-3 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
+                  className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
                   key={activity.id}
                 >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span
-                      className="h-4 w-4 flex-none rounded-full"
-                      style={{ backgroundColor: activity.color }}
-                    />
-                    <span className="truncate font-medium">{activity.name}</span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="space-y-3">
-          <div className="flex items-end justify-between gap-3">
-            <h2 className="text-lg font-semibold">Timeline</h2>
-            {timelineIntervals.length > 0 ? (
-              <p className="text-sm text-zinc-400">
-                {timelineIntervals.length} intervals
-              </p>
-            ) : null}
-          </div>
-
-          {timelineIntervals.length === 0 ? (
-            <p className="rounded-md border border-dashed border-zinc-700 px-4 py-5 text-sm text-zinc-400">
-              {hasTrackingStarted
-                ? "Log an activity to create your first interval."
-                : "Start tracking to begin the timeline."}
-            </p>
-          ) : (
-            <ul className="space-y-3">
-              {timelineIntervals.map((interval) => (
-                <li
-                  className="rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
-                  key={interval.id}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span
-                        className="h-4 w-4 flex-none rounded-full"
-                        style={{ backgroundColor: interval.activity.color }}
-                      />
-                      <span className="truncate font-medium">
-                        {interval.activity.name}
-                      </span>
-                    </div>
-
-                    <span className="text-sm text-zinc-400">
-                      {formatDuration(interval.start, interval.end)}
-                    </span>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-zinc-400">
-                    <span>{formatTime(interval.start)}</span>
-                    <span>to</span>
-                    <span>{formatTime(interval.end)}</span>
-                  </div>
+                  <span
+                    className="h-4 w-4 flex-none rounded-full"
+                    style={{ backgroundColor: activity.color }}
+                  />
+                  <span className="truncate font-medium">{activity.name}</span>
                 </li>
               ))}
             </ul>
@@ -458,70 +448,472 @@ export function App() {
         </section>
       </section>
 
-      {isLogModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-md p-4">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/95 p-6 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200">
-            <h2 className="text-xl font-bold text-zinc-50 leading-tight mb-2">
-              How did you spend the last {modalElapsedText}?
-            </h2>
-            <p className="text-sm text-zinc-400 mb-6">
-              Select one or more activities to attribute this time block to.
-            </p>
-
-            <div className="space-y-2 max-h-60 overflow-y-auto mb-6 pr-1 custom-scrollbar">
-              {activities.length === 0 ? (
-                <p className="rounded-md border border-dashed border-zinc-700 px-4 py-5 text-sm text-zinc-400 text-center">
-                  No activities saved yet.
-                </p>
-              ) : (
-                activities.map((activity) => {
-                  const isChecked = selectedActivityIds.includes(activity.id);
-                  return (
-                    <label
-                      key={activity.id}
-                      className="flex items-center justify-between p-3.5 rounded-xl border border-zinc-850 bg-zinc-950/60 hover:bg-zinc-800/40 hover:border-zinc-700/60 cursor-pointer select-none transition-all duration-150"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span
-                          className="h-3.5 w-3.5 flex-none rounded-full"
-                          style={{ backgroundColor: activity.color }}
-                        />
-                        <span className="truncate font-medium text-zinc-200">
-                          {activity.name}
-                        </span>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => handleToggleActivity(activity.id)}
-                        className="h-5 w-5 rounded border-zinc-700 bg-zinc-900 text-cyan-400 focus:ring-cyan-400 focus:ring-offset-zinc-900 cursor-pointer accent-cyan-400"
-                      />
-                    </label>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="flex items-center justify-end gap-3 border-t border-zinc-800/60 pt-4">
-              <button
-                type="button"
-                onClick={handleCloseLogDialog}
-                className="rounded-xl border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800 px-5 py-2.5 text-sm font-semibold text-zinc-300 hover:text-zinc-50 transition-all active:scale-97 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleContinueLogDialog}
-                disabled={selectedActivityIds.length === 0}
-                className="rounded-xl bg-cyan-300 hover:bg-cyan-200 disabled:opacity-40 disabled:hover:bg-cyan-300 disabled:cursor-not-allowed px-5 py-2.5 text-sm font-bold text-zinc-950 transition-all active:scale-97 cursor-pointer"
-              >
-                Continue
-              </button>
-            </div>
+      {/* ── Modal overlay ────────────────────────────────────────────────────── */}
+      {isModalOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-950/80 backdrop-blur-sm p-4 sm:items-center"
+          onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+            {modalView === "select" ? (
+              <SelectView
+                activities={activities}
+                elapsedText={modalElapsedText}
+                selectedActivityIds={selectedActivityIds}
+                onToggle={toggleActivity}
+                onCancel={closeModal}
+                onContinue={proceedToAllocate}
+              />
+            ) : (
+              <AllocateView
+                activities={selectedActivities}
+                allocations={allocations}
+                elapsedText={modalElapsedText}
+                totalMinutes={modalTotalMinutes}
+                onAllocationsChange={setAllocations}
+                onBack={() => setModalView("select")}
+                onSave={handleSave}
+                isSaving={isSaving}
+                saveError={modalError}
+              />
+            )}
           </div>
         </div>
-      )}
+      ) : null}
     </main>
+  );
+}
+
+// ─── Timeline ─────────────────────────────────────────────────────────────────
+
+type TimelineProps = {
+  blocks: TimeBlockFull[];
+  loading: boolean;
+  error: string;
+};
+
+function Timeline({ blocks, loading, error }: TimelineProps) {
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        {[1, 2].map((i) => (
+          <div
+            key={i}
+            className="h-16 animate-pulse rounded-xl border border-zinc-800 bg-zinc-800/50"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <p className="rounded-xl border border-red-900 bg-red-950/40 px-4 py-4 text-sm text-red-300">
+        {error}
+      </p>
+    );
+  }
+
+  if (blocks.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-zinc-700 px-5 py-8 text-center">
+        <p className="text-sm font-medium text-zinc-300">No time blocks yet.</p>
+        <p className="mt-1 text-sm text-zinc-500">
+          Log your first retrospective block to begin tracking your day.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {blocks.map((block, index) => (
+        <TimeBlockCard
+          key={block.id}
+          block={block}
+          defaultExpanded={index === 0}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── TimeBlockCard ────────────────────────────────────────────────────────────
+
+type TimeBlockCardProps = {
+  block: TimeBlockFull;
+  defaultExpanded: boolean;
+};
+
+function TimeBlockCard({ block, defaultExpanded }: TimeBlockCardProps) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+
+  const start = new Date(block.startTime);
+  const end = new Date(block.endTime);
+  const timeRange = `${formatTime(start)} → ${formatTime(end)}`;
+  const duration = formatSeconds(block.elapsedSeconds);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
+      {/* ── Header row (always visible) ────────────────────────────────── */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-zinc-800/60 transition-colors"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          {/* Chevron */}
+          <span
+            className={`flex-none text-zinc-500 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+            aria-hidden
+          >
+            <ChevronDownIcon />
+          </span>
+
+          <span className="truncate text-sm font-semibold text-zinc-100">
+            {timeRange}
+          </span>
+        </div>
+
+        {/* Duration badge */}
+        <span className="shrink-0 rounded-md bg-zinc-800 px-2.5 py-1 text-xs font-semibold tabular-nums text-zinc-300">
+          {duration}
+        </span>
+      </button>
+
+      {/* ── Expanded body ───────────────────────────────────────────────── */}
+      {expanded ? (
+        <div className="border-t border-zinc-800 px-4 pb-4 pt-3 space-y-1">
+          {block.allocations.length === 0 ? (
+            <p className="text-xs text-zinc-500">No allocations recorded.</p>
+          ) : (
+            block.allocations.map((alloc) => (
+              <ActivityAllocationRow key={alloc.id} allocation={alloc} />
+            ))
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ─── ActivityAllocationRow ────────────────────────────────────────────────────
+
+type ActivityAllocationRowProps = {
+  allocation: BlockAllocation;
+};
+
+function ActivityAllocationRow({ allocation }: ActivityAllocationRowProps) {
+  const { activity, durationSeconds, percentage } = allocation;
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 hover:bg-zinc-800/50 transition-colors">
+      {/* Color swatch + name */}
+      <div className="flex items-center gap-2.5 min-w-0">
+        <span
+          className="h-2.5 w-2.5 flex-none rounded-full"
+          style={{ backgroundColor: activity.color }}
+        />
+        <span className="truncate text-sm font-medium text-zinc-200">
+          {activity.name}
+        </span>
+      </div>
+
+      {/* Duration + percentage */}
+      <div className="flex items-baseline gap-2.5 shrink-0 tabular-nums">
+        <span className="text-sm font-semibold text-zinc-100">
+          {formatSeconds(durationSeconds)}
+        </span>
+        <span className="text-xs text-zinc-500 w-8 text-right">
+          {percentage}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─── ChevronDownIcon ──────────────────────────────────────────────────────────
+
+function ChevronDownIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="2 5 7 10 12 5" />
+    </svg>
+  );
+}
+
+// ─── SelectView ───────────────────────────────────────────────────────────────
+
+type SelectViewProps = {
+  activities: Activity[];
+  elapsedText: string;
+  selectedActivityIds: number[];
+  onToggle: (id: number) => void;
+  onCancel: () => void;
+  onContinue: () => void;
+};
+
+function SelectView({
+  activities, elapsedText, selectedActivityIds, onToggle, onCancel, onContinue,
+}: SelectViewProps) {
+  return (
+    <div className="flex flex-col">
+      <div className="px-6 pt-6 pb-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">
+          How was the last
+        </p>
+        <p className="text-3xl font-bold text-zinc-50">{elapsedText}</p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mt-1">spent?</p>
+      </div>
+
+      <div className="h-px bg-zinc-800" />
+
+      <div className="overflow-y-auto max-h-72 px-3 py-3 space-y-1">
+        {activities.length === 0 ? (
+          <p className="px-3 py-6 text-center text-sm text-zinc-500">No activities saved yet.</p>
+        ) : (
+          activities.map((activity) => {
+            const checked = selectedActivityIds.includes(activity.id);
+            return (
+              <label
+                key={activity.id}
+                className={`flex items-center justify-between gap-3 rounded-xl px-4 py-3 cursor-pointer select-none transition-all duration-100 ${checked
+                    ? "bg-zinc-800 border border-zinc-700"
+                    : "bg-zinc-900/40 border border-transparent hover:bg-zinc-800/50"
+                  }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <span
+                    className="h-3 w-3 flex-none rounded-full"
+                    style={{ backgroundColor: activity.color }}
+                  />
+                  <span className="truncate text-sm font-medium text-zinc-200">{activity.name}</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => onToggle(activity.id)}
+                  className="h-4 w-4 rounded accent-cyan-400 cursor-pointer"
+                />
+              </label>
+            );
+          })
+        )}
+      </div>
+
+      <div className="h-px bg-zinc-800" />
+
+      <div className="flex gap-3 px-6 py-4">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onContinue}
+          disabled={selectedActivityIds.length === 0}
+          className="flex-1 rounded-xl bg-cyan-300 py-3 text-sm font-bold text-zinc-950 hover:bg-cyan-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          Continue
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── AllocateView ─────────────────────────────────────────────────────────────
+
+type AllocateViewProps = {
+  activities: Activity[];
+  allocations: Allocation[];
+  elapsedText: string;
+  totalMinutes: number;
+  onAllocationsChange: (updated: Allocation[]) => void;
+  onBack: () => void;
+  onSave: () => Promise<void>;
+  isSaving: boolean;
+  saveError: string;
+};
+
+function AllocateView({
+  activities, allocations, elapsedText, totalMinutes,
+  onAllocationsChange, onBack, onSave, isSaving, saveError,
+}: AllocateViewProps) {
+  return (
+    <div className="flex flex-col">
+      <div className="px-6 pt-6 pb-4">
+        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">
+          How was the last
+        </p>
+        <p className="text-3xl font-bold text-zinc-50">{elapsedText}</p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mt-1">spent?</p>
+      </div>
+
+      <div className="h-px bg-zinc-800" />
+
+      {/* Allocation bar */}
+      <div className="px-6 pt-5 pb-2">
+        <AllocationBar
+          activities={activities}
+          allocations={allocations}
+          onChange={onAllocationsChange}
+        />
+      </div>
+
+      {/* Legend */}
+      <div className="divide-y divide-zinc-800/60 px-6 pb-2">
+        {allocations.map((alloc) => {
+          const activity = activities.find((a) => a.id === alloc.activityId);
+          if (!activity) return null;
+          const mins = formatMinutes((alloc.percentage / 100) * totalMinutes);
+          return (
+            <div key={alloc.activityId} className="flex items-center justify-between gap-4 py-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span
+                  className="h-3 w-3 flex-none rounded-full"
+                  style={{ backgroundColor: activity.color }}
+                />
+                <span className="truncate text-sm font-semibold text-zinc-200">
+                  {activity.name}
+                </span>
+              </div>
+              <div className="flex items-baseline gap-3 shrink-0 tabular-nums">
+                <span className="text-sm font-medium text-zinc-200">{mins}</span>
+                <span className="text-xs font-semibold text-zinc-500 w-10 text-right">
+                  {alloc.percentage}%
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="h-px bg-zinc-800" />
+
+      {/* Inline error */}
+      {saveError ? (
+        <p className="mx-6 mt-3 rounded-lg bg-red-950/60 border border-red-800 px-4 py-2.5 text-sm text-red-300">
+          {saveError}
+        </p>
+      ) : null}
+
+      {/* Footer */}
+      <div className="flex gap-3 px-6 py-4">
+        <button
+          type="button"
+          onClick={onBack}
+          disabled={isSaving}
+          className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          Back
+        </button>
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={isSaving}
+          className="flex-1 rounded-xl bg-cyan-300 py-3 text-sm font-bold text-zinc-950 hover:bg-cyan-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {isSaving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── AllocationBar ────────────────────────────────────────────────────────────
+
+type AllocationBarProps = {
+  activities: Activity[];
+  allocations: Allocation[];
+  onChange: (updated: Allocation[]) => void;
+};
+
+export function AllocationBar({ activities, allocations, onChange }: AllocationBarProps) {
+  const barRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef<{
+    dividerIndex: number;
+    startX: number;
+    startAllocations: Allocation[];
+  } | null>(null);
+
+  const activityMap = Object.fromEntries(activities.map((a) => [a.id, a]));
+
+  function pctFromPixelDelta(deltaX: number): number {
+    const bar = barRef.current;
+    if (!bar) return 0;
+    const width = bar.getBoundingClientRect().width;
+    return (deltaX / width) * 100;
+  }
+
+  const onPointerDown = useCallback(
+    (dividerIndex: number) => (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      dragging.current = { dividerIndex, startX: e.clientX, startAllocations: allocations };
+    },
+    [allocations],
+  );
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!dragging.current) return;
+      const { dividerIndex, startX, startAllocations } = dragging.current;
+      const deltaPct = pctFromPixelDelta(e.clientX - startX);
+      const rounded = Math.round(deltaPct);
+      if (rounded === 0) return;
+      const updated = moveDivider(startAllocations, dividerIndex, rounded);
+      onChange(updated);
+      dragging.current = { dividerIndex, startX: e.clientX, startAllocations: updated };
+    },
+    [onChange],
+  );
+
+  const onPointerUp = useCallback(() => { dragging.current = null; }, []);
+
+  return (
+    <div
+      ref={barRef}
+      className="relative flex h-10 w-full overflow-hidden rounded-xl touch-none select-none"
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+    >
+      {allocations.map((alloc, i) => {
+        const activity = activityMap[alloc.activityId];
+        if (!activity) return null;
+        const isLast = i === allocations.length - 1;
+
+        return (
+          <div
+            key={alloc.activityId}
+            className="relative h-full transition-none"
+            style={{ width: `${alloc.percentage}%`, backgroundColor: activity.color }}
+          >
+            {!isLast ? (
+              <div
+                className="absolute right-0 top-0 bottom-0 z-10 flex items-center justify-center"
+                style={{ width: "18px", transform: "translateX(50%)", cursor: "col-resize" }}
+                onPointerDown={onPointerDown(i)}
+              >
+                <div className="h-6 w-1.5 rounded-full bg-zinc-900/70 shadow-sm" />
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }
