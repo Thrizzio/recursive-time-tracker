@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -11,13 +11,15 @@ type Activity = {
 
 type Allocation = {
   activityId: number;
-  percentage: number; // 0–100, all allocations always sum to 100
+  percentage: number; // integer 0–100; all allocations sum to exactly 100
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const trackingStartedAtStorageKey = "chronolog.trackingStartedAt";
+/** Minimum segment size in percentage points — prevents a segment from disappearing entirely. */
+const MIN_SEGMENT_PCT = 2;
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
@@ -33,9 +35,6 @@ function formatElapsedClock(start: Date, end: Date) {
   return [h, m, s].map((v) => v.toString().padStart(2, "0")).join(":");
 }
 
-/**
- * Format a total-minutes value as "3h 20m", "45m", "1h", etc.
- */
 function formatMinutes(totalMinutes: number) {
   const mins = Math.round(totalMinutes);
   if (mins <= 0) return "0m";
@@ -46,9 +45,6 @@ function formatMinutes(totalMinutes: number) {
   return `${h}h ${m}m`;
 }
 
-/**
- * Format elapsed time for modal title in a compact human way.
- */
 function formatElapsedHumanShort(start: Date, end: Date) {
   const totalSeconds = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
   const h = Math.floor(totalSeconds / 3600);
@@ -60,8 +56,8 @@ function formatElapsedHumanShort(start: Date, end: Date) {
 }
 
 /**
- * Build initial equal-split allocations for the selected activity IDs.
- * Each activity gets floor(100/n); any remainder goes to the first activity.
+ * Seed equal-split allocations. Integer arithmetic: remainder goes to first.
+ * e.g. 3 activities → [34, 33, 33]
  */
 function buildEqualAllocations(activityIds: number[]): Allocation[] {
   const n = activityIds.length;
@@ -75,34 +71,150 @@ function buildEqualAllocations(activityIds: number[]): Allocation[] {
 }
 
 /**
- * When the user drags one activity's slider to `newPct`, redistribute the
- * remaining (100 - newPct) evenly across all OTHER activities.
+ * Given the current allocations, move divider at index `dividerIndex`
+ * (the boundary between segment[dividerIndex] and segment[dividerIndex+1])
+ * by `deltaPct` percentage points.
+ *
+ * Only the two neighbouring segments change. All others are untouched.
+ * Min segment size is enforced via MIN_SEGMENT_PCT.
  */
-function redistributeAllocations(
+function moveDivider(
   allocations: Allocation[],
-  changedId: number,
-  newPct: number,
+  dividerIndex: number,
+  deltaPct: number,
 ): Allocation[] {
-  const clamped = Math.max(0, Math.min(100, newPct));
-  const others = allocations.filter((a) => a.activityId !== changedId);
+  const left = allocations[dividerIndex];
+  const right = allocations[dividerIndex + 1];
+  if (!left || !right) return allocations;
 
-  if (others.length === 0) {
-    // Only one activity — it always owns 100%
-    return [{ activityId: changedId, percentage: 100 }];
+  // How far can we actually move?
+  const maxIncrease = right.percentage - MIN_SEGMENT_PCT; // left grows at right's expense
+  const maxDecrease = left.percentage - MIN_SEGMENT_PCT;  // left shrinks at right's expense
+
+  const actualDelta = Math.max(-maxDecrease, Math.min(maxIncrease, deltaPct));
+
+  if (actualDelta === 0) return allocations;
+
+  return allocations.map((a, i) => {
+    if (i === dividerIndex) return { ...a, percentage: a.percentage + actualDelta };
+    if (i === dividerIndex + 1) return { ...a, percentage: a.percentage - actualDelta };
+    return a;
+  });
+}
+
+// ─── AllocationBar ────────────────────────────────────────────────────────────
+
+type AllocationBarProps = {
+  activities: Activity[];
+  allocations: Allocation[]; // must be same length as activities, in same order
+  onChange: (updated: Allocation[]) => void;
+};
+
+/**
+ * A single horizontal bar divided into coloured segments.
+ * Each divider between adjacent segments is draggable.
+ * Only the two neighbouring segments change when a divider moves.
+ */
+export function AllocationBar({ activities, allocations, onChange }: AllocationBarProps) {
+  const barRef = useRef<HTMLDivElement>(null);
+  // Which divider (0 = between seg 0 and seg 1) is being dragged, or null.
+  const dragging = useRef<{
+    dividerIndex: number;
+    startX: number;
+    startAllocations: Allocation[];
+  } | null>(null);
+
+  const activityMap = Object.fromEntries(activities.map((a) => [a.id, a]));
+
+  // Convert a pixel delta to a percentage delta based on bar width.
+  function pctFromPixelDelta(deltaX: number): number {
+    const bar = barRef.current;
+    if (!bar) return 0;
+    const width = bar.getBoundingClientRect().width;
+    return (deltaX / width) * 100;
   }
 
-  const remaining = 100 - clamped;
-  const base = Math.floor(remaining / others.length);
-  const leftover = remaining - base * others.length;
+  const onPointerDown = useCallback(
+    (dividerIndex: number) => (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      dragging.current = {
+        dividerIndex,
+        startX: e.clientX,
+        startAllocations: allocations,
+      };
+    },
+    [allocations],
+  );
 
-  let leftoverGiven = 0;
-  const updated = others.map((a, i) => {
-    const extra = i === 0 && leftoverGiven === 0 ? leftover : 0;
-    if (extra > 0) leftoverGiven = leftover;
-    return { ...a, percentage: base + extra };
-  });
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!dragging.current) return;
+      const { dividerIndex, startX, startAllocations } = dragging.current;
+      const deltaPct = pctFromPixelDelta(e.clientX - startX);
+      const rounded = Math.round(deltaPct);
+      if (rounded === 0) return;
+      const updated = moveDivider(startAllocations, dividerIndex, rounded);
+      onChange(updated);
+      // Update the reference point so dragging feels anchored
+      dragging.current = {
+        dividerIndex,
+        startX: e.clientX,
+        startAllocations: updated,
+      };
+    },
+    [onChange],
+  );
 
-  return [{ activityId: changedId, percentage: clamped }, ...updated];
+  const onPointerUp = useCallback(() => {
+    dragging.current = null;
+  }, []);
+
+  // Segments, rendered as adjacent flex children that share the full bar width.
+  const segments = allocations.map((alloc) => activityMap[alloc.activityId]);
+
+  return (
+    <div>
+      {/* ── The bar itself ─────────────────────────────────────────────── */}
+      <div
+        ref={barRef}
+        className="relative flex h-10 w-full overflow-hidden rounded-xl touch-none select-none"
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        {allocations.map((alloc, i) => {
+          const activity = segments[i];
+          if (!activity) return null;
+          const isLast = i === allocations.length - 1;
+
+          return (
+            <div
+              key={alloc.activityId}
+              className="relative h-full transition-none"
+              style={{ width: `${alloc.percentage}%`, backgroundColor: activity.color }}
+            >
+              {/* Divider handle — only between adjacent segments, not after the last */}
+              {!isLast ? (
+                <div
+                  className="absolute right-0 top-0 bottom-0 z-10 flex items-center justify-center"
+                  style={{ width: "18px", transform: "translateX(50%)", cursor: "col-resize" }}
+                  onPointerDown={onPointerDown(i)}
+                >
+                  {/* Visual grip pip */}
+                  <div className="h-6 w-1.5 rounded-full bg-zinc-900/70 shadow-sm" />
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Legend ─────────────────────────────────────────────────────── */}
+      {/* Rendered by parent; AllocationBar keeps itself pure */}
+    </div>
+  );
 }
 
 // ─── App ─────────────────────────────────────────────────────────────────────
@@ -136,15 +248,11 @@ export function App() {
   // Log dialog — Step 2: allocate percentages
   const [allocations, setAllocations] = useState<Allocation[]>([]);
 
-  // Derived values
+  // Derived
   const hasTrackingStarted = trackingStartedAt !== null;
   const boundary = trackingStartedAt ? new Date(trackingStartedAt) : null;
-  const timeSinceBoundary = boundary
-    ? formatElapsedClock(boundary, now)
-    : "00:00:00";
-  const boundaryLabel = boundary
-    ? `Started ${formatTime(boundary)}`
-    : "Waiting to start";
+  const timeSinceBoundary = boundary ? formatElapsedClock(boundary, now) : "00:00:00";
+  const boundaryLabel = boundary ? `Started ${formatTime(boundary)}` : "Waiting to start";
 
   // ── Effects ──────────────────────────────────────────────────────────────
 
@@ -167,20 +275,17 @@ export function App() {
     setError("");
     setFeedback("");
     setIsSubmitting(true);
-
     try {
       const response = await fetch(`${apiUrl}/activities`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, color }),
       });
-
       const data = await response.json();
       if (!response.ok) {
         setError(data.error ?? "Could not create activity.");
         return;
       }
-
       setActivities((prev) => [...prev, data]);
       setName("");
       setFeedback(`Created ${data.name}.`);
@@ -206,10 +311,8 @@ export function App() {
 
   function openModal() {
     if (!boundary) return;
-    const elapsed = formatElapsedHumanShort(boundary, now);
-    const totalMins = Math.max(0, (now.getTime() - boundary.getTime()) / 60000);
-    setModalElapsedText(elapsed);
-    setModalTotalMinutes(totalMins);
+    setModalElapsedText(formatElapsedHumanShort(boundary, now));
+    setModalTotalMinutes(Math.max(0, (now.getTime() - boundary.getTime()) / 60000));
     setSelectedActivityIds([]);
     setAllocations([]);
     setModalView("select");
@@ -224,9 +327,7 @@ export function App() {
 
   function toggleActivity(activityId: number) {
     setSelectedActivityIds((prev) =>
-      prev.includes(activityId)
-        ? prev.filter((id) => id !== activityId)
-        : [...prev, activityId],
+      prev.includes(activityId) ? prev.filter((id) => id !== activityId) : [...prev, activityId],
     );
   }
 
@@ -237,22 +338,18 @@ export function App() {
 
   // ── Log dialog — Step 2 (allocate) ───────────────────────────────────────
 
-  function handleSliderChange(activityId: number, newPct: number) {
-    setAllocations((prev) => redistributeAllocations(prev, activityId, newPct));
-  }
-
   function handleSave() {
-    // Phase 6 Step 4 will wire this to the backend.
-    // For now: just close the dialog and reset.
+    // Step 5 will wire to backend.
     closeModal();
     setFeedback("Time block recorded (backend coming next).");
   }
 
-  function goBackToSelect() {
-    setModalView("select");
-  }
-
   // ─── Render ──────────────────────────────────────────────────────────────
+
+  // Derive the ordered activity list that matches the current allocations order.
+  const selectedActivities = allocations
+    .map((a) => activities.find((act) => act.id === a.activityId))
+    .filter((a): a is Activity => a !== undefined);
 
   return (
     <main className="min-h-screen bg-zinc-950 px-5 py-8 text-zinc-50">
@@ -260,9 +357,7 @@ export function App() {
 
         {/* Header */}
         <header className="space-y-3">
-          <p className="text-sm font-medium uppercase tracking-wide text-cyan-300">
-            Chronolog
-          </p>
+          <p className="text-sm font-medium uppercase tracking-wide text-cyan-300">Chronolog</p>
           <div className="space-y-2">
             <h1 className="text-3xl font-semibold leading-tight">Activities</h1>
             <p className="text-base leading-7 text-zinc-300">
@@ -304,7 +399,6 @@ export function App() {
               </div>
               <p className="pb-1 text-right text-sm text-zinc-400">{boundaryLabel}</p>
             </div>
-
             <button
               className="mt-4 w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 hover:bg-cyan-200 transition-colors duration-150 active:scale-[0.98]"
               onClick={openModal}
@@ -327,7 +421,6 @@ export function App() {
               value={name}
             />
           </label>
-
           <label className="block space-y-2">
             <span className="text-sm font-medium text-zinc-200">Color</span>
             <input
@@ -376,7 +469,7 @@ export function App() {
         </section>
       </section>
 
-      {/* ── Modal overlay ──────────────────────────────────────────────────── */}
+      {/* ── Modal overlay ────────────────────────────────────────────────────── */}
       {isModalOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-950/80 backdrop-blur-sm p-4 sm:items-center"
@@ -384,7 +477,6 @@ export function App() {
         >
           <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl">
 
-            {/* ── View 1: Select activities ─────────────────────────────── */}
             {modalView === "select" ? (
               <SelectView
                 activities={activities}
@@ -394,20 +486,17 @@ export function App() {
                 onCancel={closeModal}
                 onContinue={proceedToAllocate}
               />
-            ) : null}
-
-            {/* ── View 2: Allocate percentages ─────────────────────────── */}
-            {modalView === "allocate" ? (
+            ) : (
               <AllocateView
-                activities={activities}
+                activities={selectedActivities}
                 allocations={allocations}
                 elapsedText={modalElapsedText}
                 totalMinutes={modalTotalMinutes}
-                onSliderChange={handleSliderChange}
-                onBack={goBackToSelect}
+                onAllocationsChange={setAllocations}
+                onBack={() => setModalView("select")}
                 onSave={handleSave}
               />
-            ) : null}
+            )}
           </div>
         </div>
       ) : null}
@@ -427,34 +516,23 @@ type SelectViewProps = {
 };
 
 function SelectView({
-  activities,
-  elapsedText,
-  selectedActivityIds,
-  onToggle,
-  onCancel,
-  onContinue,
+  activities, elapsedText, selectedActivityIds, onToggle, onCancel, onContinue,
 }: SelectViewProps) {
   return (
-    <div className="flex flex-col gap-0">
-      {/* Header */}
+    <div className="flex flex-col">
       <div className="px-6 pt-6 pb-4">
         <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">
           How was the last
         </p>
         <p className="text-3xl font-bold text-zinc-50">{elapsedText}</p>
-        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mt-1">
-          spent?
-        </p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mt-1">spent?</p>
       </div>
 
       <div className="h-px bg-zinc-800" />
 
-      {/* Activity list */}
       <div className="overflow-y-auto max-h-72 px-3 py-3 space-y-1">
         {activities.length === 0 ? (
-          <p className="px-3 py-6 text-center text-sm text-zinc-500">
-            No activities saved yet.
-          </p>
+          <p className="px-3 py-6 text-center text-sm text-zinc-500">No activities saved yet.</p>
         ) : (
           activities.map((activity) => {
             const checked = selectedActivityIds.includes(activity.id);
@@ -467,13 +545,8 @@ function SelectView({
                   }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <span
-                    className="h-3 w-3 flex-none rounded-full"
-                    style={{ backgroundColor: activity.color }}
-                  />
-                  <span className="truncate text-sm font-medium text-zinc-200">
-                    {activity.name}
-                  </span>
+                  <span className="h-3 w-3 flex-none rounded-full" style={{ backgroundColor: activity.color }} />
+                  <span className="truncate text-sm font-medium text-zinc-200">{activity.name}</span>
                 </div>
                 <input
                   type="checkbox"
@@ -489,7 +562,6 @@ function SelectView({
 
       <div className="h-px bg-zinc-800" />
 
-      {/* Footer actions */}
       <div className="flex gap-3 px-6 py-4">
         <button
           type="button"
@@ -514,65 +586,72 @@ function SelectView({
 // ─── AllocateView ─────────────────────────────────────────────────────────────
 
 type AllocateViewProps = {
-  activities: Activity[];
+  activities: Activity[]; // ordered to match allocations
   allocations: Allocation[];
   elapsedText: string;
   totalMinutes: number;
-  onSliderChange: (activityId: number, newPct: number) => void;
+  onAllocationsChange: (updated: Allocation[]) => void;
   onBack: () => void;
   onSave: () => void;
 };
 
 function AllocateView({
-  activities,
-  allocations,
-  elapsedText,
-  totalMinutes,
-  onSliderChange,
-  onBack,
-  onSave,
+  activities, allocations, elapsedText, totalMinutes,
+  onAllocationsChange, onBack, onSave,
 }: AllocateViewProps) {
-
-  const activityMap = Object.fromEntries(activities.map((a) => [a.id, a]));
-
   return (
-    <div className="flex flex-col gap-0">
+    <div className="flex flex-col">
       {/* Header */}
       <div className="px-6 pt-6 pb-4">
         <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">
           How was the last
         </p>
         <p className="text-3xl font-bold text-zinc-50">{elapsedText}</p>
-        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mt-1">
-          spent?
-        </p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mt-1">spent?</p>
       </div>
 
       <div className="h-px bg-zinc-800" />
 
-      {/* Sliders */}
-      <div className="divide-y divide-zinc-800">
-        {allocations.map((alloc) => {
-          const activity = activityMap[alloc.activityId];
-          if (!activity) return null;
-          const allocMinutes = (alloc.percentage / 100) * totalMinutes;
+      {/* Allocation bar */}
+      <div className="px-6 pt-5 pb-2">
+        <AllocationBar
+          activities={activities}
+          allocations={allocations}
+          onChange={onAllocationsChange}
+        />
+      </div>
 
+      {/* Legend */}
+      <div className="divide-y divide-zinc-800/60 px-6 pb-2">
+        {allocations.map((alloc) => {
+          const activity = activities.find((a) => a.id === alloc.activityId);
+          if (!activity) return null;
+          const mins = formatMinutes((alloc.percentage / 100) * totalMinutes);
           return (
-            <ActivitySlider
-              key={alloc.activityId}
-              activity={activity}
-              percentage={alloc.percentage}
-              durationLabel={formatMinutes(allocMinutes)}
-              isOnly={allocations.length === 1}
-              onChange={(pct) => onSliderChange(alloc.activityId, pct)}
-            />
+            <div key={alloc.activityId} className="flex items-center justify-between gap-4 py-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span
+                  className="h-3 w-3 flex-none rounded-full"
+                  style={{ backgroundColor: activity.color }}
+                />
+                <span className="truncate text-sm font-semibold text-zinc-200">
+                  {activity.name}
+                </span>
+              </div>
+              <div className="flex items-baseline gap-3 shrink-0 tabular-nums">
+                <span className="text-sm font-medium text-zinc-200">{mins}</span>
+                <span className="text-xs font-semibold text-zinc-500 w-10 text-right">
+                  {alloc.percentage}%
+                </span>
+              </div>
+            </div>
           );
         })}
       </div>
 
       <div className="h-px bg-zinc-800" />
 
-      {/* Footer actions */}
+      {/* Footer */}
       <div className="flex gap-3 px-6 py-4">
         <button
           type="button"
@@ -589,103 +668,6 @@ function AllocateView({
           Save
         </button>
       </div>
-    </div>
-  );
-}
-
-// ─── ActivitySlider ───────────────────────────────────────────────────────────
-
-type ActivitySliderProps = {
-  activity: Activity;
-  percentage: number;
-  durationLabel: string;
-  isOnly: boolean;
-  onChange: (newPct: number) => void;
-};
-
-function ActivitySlider({
-  activity,
-  percentage,
-  durationLabel,
-  isOnly,
-  onChange,
-}: ActivitySliderProps) {
-  const trackRef = useRef<HTMLDivElement>(null);
-  const isDragging = useRef(false);
-
-  function pctFromPointer(clientX: number): number {
-    const track = trackRef.current;
-    if (!track) return percentage;
-    const rect = track.getBoundingClientRect();
-    return Math.round(Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100)));
-  }
-
-  function onPointerDown(e: React.PointerEvent) {
-    if (isOnly) return;
-    isDragging.current = true;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    onChange(pctFromPointer(e.clientX));
-  }
-
-  function onPointerMove(e: React.PointerEvent) {
-    if (!isDragging.current || isOnly) return;
-    onChange(pctFromPointer(e.clientX));
-  }
-
-  function onPointerUp() {
-    isDragging.current = false;
-  }
-
-  return (
-    <div className="px-6 py-4 space-y-3">
-      {/* Activity name */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span
-            className="h-2.5 w-2.5 flex-none rounded-full"
-            style={{ backgroundColor: activity.color }}
-          />
-          <span className="text-sm font-semibold text-zinc-100 truncate">
-            {activity.name}
-          </span>
-        </div>
-        <span className="text-xs font-medium text-zinc-500 tabular-nums shrink-0">
-          {percentage}%
-        </span>
-      </div>
-
-      {/* Slider track */}
-      <div
-        ref={trackRef}
-        className={`relative h-2 w-full touch-none rounded-full bg-zinc-800 ${isOnly ? "cursor-default" : "cursor-pointer"}`}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-      >
-        {/* Filled portion */}
-        <div
-          className="absolute inset-y-0 left-0 rounded-full transition-none"
-          style={{
-            width: `${percentage}%`,
-            backgroundColor: activity.color,
-            opacity: 0.85,
-          }}
-        />
-        {/* Thumb */}
-        {!isOnly ? (
-          <div
-            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 h-5 w-5 rounded-full border-2 border-zinc-900 shadow-md transition-none"
-            style={{
-              left: `${percentage}%`,
-              backgroundColor: activity.color,
-            }}
-          />
-        ) : null}
-      </div>
-
-      {/* Duration label */}
-      <p className="text-base font-semibold text-zinc-200">{durationLabel}</p>
     </div>
   );
 }
