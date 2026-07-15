@@ -1,24 +1,30 @@
-import { sql } from "drizzle-orm";
-import { db, pool } from "./client.js";
+import "dotenv/config";
+import { Pool } from "pg";
 
-try {
-  const result = await db.execute(sql`select current_database() as database_name`);
-  const databaseName = result.rows[0]?.database_name;
+const pool = new Pool({ connectionString: process.env.DATABASE_URL! });
 
-  console.log(`Connected to PostgreSQL database: ${databaseName}`);
-} catch (error) {
-  console.error("Could not connect to PostgreSQL.");
-  console.error("Check apps/api/.env and make sure DATABASE_URL uses your local PostgreSQL username, password, host, port, and database name.");
-
-  const cause = error instanceof Error ? error.cause : undefined;
-
-  if (cause instanceof Error) {
-    console.error(`Reason: ${cause.message}`);
-  } else if (error instanceof Error) {
-    console.error(`Reason: ${error.message}`);
+async function check() {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public'
+      ORDER BY table_name;
+    `);
+    console.log("Tables in public schema:");
+    if (result.rows.length === 0) {
+      console.log("  (none — schema is empty)");
+    } else {
+      result.rows.forEach((row) => console.log(" ", row.table_name));
+    }
+  } finally {
+    client.release();
+    await pool.end();
   }
-
-  process.exitCode = 1;
-} finally {
-  await pool.end();
 }
+
+check().catch((err) => {
+  console.error("Connection failed:", err.message);
+  process.exit(1);
+});
