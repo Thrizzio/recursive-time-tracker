@@ -14,6 +14,22 @@ type Allocation = {
   percentage: number; // integer 0–100; all allocations sum to exactly 100
 };
 
+/** Shape returned by POST /time-blocks */
+type TimeBlock = {
+  id: number;
+  startTime: string;
+  endTime: string;
+  createdAt: string;
+  elapsedSeconds: number;
+  allocations: Array<{
+    id: number;
+    activityId: number;
+    percentage: number;
+    durationSeconds: number;
+    activity: Activity;
+  }>;
+};
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
@@ -247,6 +263,8 @@ export function App() {
 
   // Log dialog — Step 2: allocate percentages
   const [allocations, setAllocations] = useState<Allocation[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [modalError, setModalError] = useState("");
 
   // Derived
   const hasTrackingStarted = trackingStartedAt !== null;
@@ -323,6 +341,8 @@ export function App() {
     setIsModalOpen(false);
     setSelectedActivityIds([]);
     setAllocations([]);
+    setModalError("");
+    setIsSaving(false);
   }
 
   function toggleActivity(activityId: number) {
@@ -333,15 +353,53 @@ export function App() {
 
   function proceedToAllocate() {
     setAllocations(buildEqualAllocations(selectedActivityIds));
+    setModalError("");
     setModalView("allocate");
   }
 
   // ── Log dialog — Step 2 (allocate) ───────────────────────────────────────
 
-  function handleSave() {
-    // Step 5 will wire to backend.
-    closeModal();
-    setFeedback("Time block recorded (backend coming next).");
+  async function handleSave() {
+    if (isSaving) return; // guard against double-tap
+    setIsSaving(true);
+    setModalError("");
+
+    try {
+      const response = await fetch(`${apiUrl}/time-blocks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          allocations: allocations.map((a) => ({
+            activityId: a.activityId,
+            percentage: a.percentage,
+          })),
+        }),
+      });
+
+      const data = (await response.json()) as TimeBlock | { error: string };
+
+      if (!response.ok) {
+        // Keep modal open; show the server's error message
+        setModalError((data as { error: string }).error ?? "Could not save. Please try again.");
+        return;
+      }
+
+      const block = data as TimeBlock;
+
+      // Advance the tracking boundary to the server's end_time so the
+      // next elapsed-time counter starts from exactly when this block ended.
+      localStorage.setItem(trackingStartedAtStorageKey, block.endTime);
+      setTrackingStartedAt(block.endTime);
+      setNow(new Date(block.endTime));
+
+      closeModal();
+      setFeedback(`Saved — ${block.elapsedSeconds}s logged across ${block.allocations.length} activit${block.allocations.length === 1 ? "y" : "ies"}.`);
+      setError("");
+    } catch {
+      setModalError("Network error. Check your connection and try again.");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   // ─── Render ──────────────────────────────────────────────────────────────
@@ -495,6 +553,8 @@ export function App() {
                 onAllocationsChange={setAllocations}
                 onBack={() => setModalView("select")}
                 onSave={handleSave}
+                isSaving={isSaving}
+                saveError={modalError}
               />
             )}
           </div>
@@ -540,8 +600,8 @@ function SelectView({
               <label
                 key={activity.id}
                 className={`flex items-center justify-between gap-3 rounded-xl px-4 py-3 cursor-pointer select-none transition-all duration-100 ${checked
-                    ? "bg-zinc-800 border border-zinc-700"
-                    : "bg-zinc-900/40 border border-transparent hover:bg-zinc-800/50"
+                  ? "bg-zinc-800 border border-zinc-700"
+                  : "bg-zinc-900/40 border border-transparent hover:bg-zinc-800/50"
                   }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
@@ -592,12 +652,14 @@ type AllocateViewProps = {
   totalMinutes: number;
   onAllocationsChange: (updated: Allocation[]) => void;
   onBack: () => void;
-  onSave: () => void;
+  onSave: () => Promise<void>;
+  isSaving: boolean;
+  saveError: string;
 };
 
 function AllocateView({
   activities, allocations, elapsedText, totalMinutes,
-  onAllocationsChange, onBack, onSave,
+  onAllocationsChange, onBack, onSave, isSaving, saveError,
 }: AllocateViewProps) {
   return (
     <div className="flex flex-col">
@@ -651,21 +713,30 @@ function AllocateView({
 
       <div className="h-px bg-zinc-800" />
 
+      {/* Inline error message */}
+      {saveError ? (
+        <p className="mx-6 mt-3 rounded-lg bg-red-950/60 border border-red-800 px-4 py-2.5 text-sm text-red-300">
+          {saveError}
+        </p>
+      ) : null}
+
       {/* Footer */}
       <div className="flex gap-3 px-6 py-4">
         <button
           type="button"
           onClick={onBack}
-          className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 transition-colors"
+          disabled={isSaving}
+          className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           Back
         </button>
         <button
           type="button"
           onClick={onSave}
-          className="flex-1 rounded-xl bg-cyan-300 py-3 text-sm font-bold text-zinc-950 hover:bg-cyan-200 transition-colors"
+          disabled={isSaving}
+          className="flex-1 rounded-xl bg-cyan-300 py-3 text-sm font-bold text-zinc-950 hover:bg-cyan-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          Save
+          {isSaving ? "Saving…" : "Save"}
         </button>
       </div>
     </div>
