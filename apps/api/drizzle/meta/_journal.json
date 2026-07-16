@@ -8,6 +8,20 @@
       "when": 1784026285486,
       "tag": "0000_cooing_slyde",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784123333215,
+      "tag": "0001_fluffy_black_panther",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784202862633,
+      "tag": "0002_gray_tempest",
+      "breakpoints": true
     }
   ]
 }
