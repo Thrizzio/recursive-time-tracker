@@ -1,8 +1,20 @@
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? "";
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? "";
-const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL ?? "http://localhost:3000/auth/google/callback";
+// Replace lines 1-3 in apps/api/src/auth/google.ts
+
+export function getGoogleConfig() {
+    const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+    const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+    const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL ?? "http://localhost:3000/auth/google/callback";
+
+    if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+        throw new Error("Missing Google OAuth credentials. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the .env file.");
+    }
+
+    return { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_CALLBACK_URL };
+}
 
 export function getGoogleAuthUrl() {
+    const { GOOGLE_CLIENT_ID, GOOGLE_CALLBACK_URL } = getGoogleConfig();
+
     const rootUrl = "https://accounts.google.com/o/oauth2/v2/auth";
     const options = {
         redirect_uri: GOOGLE_CALLBACK_URL,
@@ -21,6 +33,8 @@ export function getGoogleAuthUrl() {
 }
 
 export async function getGoogleTokens(code: string) {
+    const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_CALLBACK_URL } = getGoogleConfig();
+
     const url = "https://oauth2.googleapis.com/token";
     const values = {
         code,
