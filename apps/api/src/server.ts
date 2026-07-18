@@ -6,6 +6,7 @@ import { db } from "./db/client.js";
 import { activities, activity_allocations, timeBlocks, users } from "./db/schema.js";
 import { getGoogleAuthUrl, getGoogleTokens, getGoogleUser } from "./auth/google.js";
 import { createSession, getSessionUserId, deleteSession } from "./auth/session.js";
+import { getIncompleteTasks, completeTasks } from "./services/google/tasks.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -57,6 +58,8 @@ app.get("/auth/google/callback", async (req, res) => {
     const tokens = await getGoogleTokens(code);
     const googleUser = await getGoogleUser(tokens.id_token, tokens.access_token);
 
+    const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
+
     let [user] = await db.select().from(users).where(eq(users.googleId, googleUser.id));
     if (!user) {
       [user] = await db.insert(users).values({
@@ -64,11 +67,17 @@ app.get("/auth/google/callback", async (req, res) => {
         email: googleUser.email,
         name: googleUser.name,
         avatarUrl: googleUser.picture,
+        googleAccessToken: tokens.access_token,
+        googleRefreshToken: tokens.refresh_token ?? null,
+        googleTokenExpiresAt: expiresAt,
       }).returning();
     } else {
       [user] = await db.update(users).set({
         name: googleUser.name,
         avatarUrl: googleUser.picture,
+        googleAccessToken: tokens.access_token,
+        googleTokenExpiresAt: expiresAt,
+        ...(tokens.refresh_token ? { googleRefreshToken: tokens.refresh_token } : {}),
       }).where(eq(users.id, user.id)).returning();
     }
 
@@ -133,26 +142,40 @@ app.post("/activities", requireAuth, async (request, response) => {
   response.status(201).json(activity);
 });
 
+// ─── Tasks ────────────────────────────────────────────────────────────────────
+
+app.get("/tasks", requireAuth, async (req, res) => {
+  const userId = res.locals.userId;
+  try {
+    const tasks = await getIncompleteTasks(userId);
+    res.json(tasks);
+  } catch (error) {
+    console.error("Failed to fetch tasks:", error);
+    res.status(500).json({ error: "Could not fetch tasks from Google." });
+  }
+});
+
 // ─── Time blocks  ─────────────────────────────────────────────────────────────
 
 /**
- * POST /time-blocks
+ * POST /log-session
  *
- * Body: { allocations: Array<{ activityId: number; percentage: number }> }
+ * Body: { allocations: Array<{ activityId: number; percentage: number }>, completedTaskIds?: string[] }
  *
  * The backend is solely responsible for determining time.
  *  - start_time = end_time of the most recently created time block, OR
  *                 the server time of this very request if no block exists yet
- *                 (first-ever block; start = end = now, elapsed = 0)
  *  - end_time   = current server time (captured once at request start)
  *
  * On success returns the full time block with all allocations and their activity.
+ * Also handles Google Tasks integration gracefully.
  */
-app.post("/time-blocks", requireAuth, async (request, response) => {
+app.post("/log-session", requireAuth, async (request, response) => {
   // ── 1. Parse and validate input ────────────────────────────────────────────
   const userId = response.locals.userId;
 
   const rawAllocations: unknown = request.body.allocations;
+  const completedTaskIds: string[] = request.body.completedTaskIds || [];
 
   if (!Array.isArray(rawAllocations) || rawAllocations.length === 0) {
     response.status(400).json({ error: "allocations must be a non-empty array." });
@@ -276,25 +299,44 @@ app.post("/time-blocks", requireAuth, async (request, response) => {
       return { block, insertedAllocations };
     });
 
-    // ── 5. Build enriched response ────────────────────────────────────────
+    // ── 5. Complete Google Tasks (Secondary) ──────────────────────────────
+    let tasksUpdated = true;
+    let warning = undefined;
+
+    if (completedTaskIds.length > 0) {
+      try {
+        await completeTasks(userId, completedTaskIds);
+      } catch (err) {
+        console.error("Failed to complete Google Tasks:", err);
+        tasksUpdated = false;
+        warning = "Time block was saved successfully, but one or more Google Tasks could not be updated.";
+      }
+    }
+
+    // ── 6. Build enriched response ────────────────────────────────────────
 
     const durationMap = Object.fromEntries(
       durations.map((d) => [d.activityId, d.durationSeconds]),
     );
 
     response.status(201).json({
-      id: result.block.id,
-      startTime: result.block.startTime,
-      endTime: result.block.endTime,
-      createdAt: result.block.createdAt,
-      elapsedSeconds,
-      allocations: result.insertedAllocations.map((alloc) => ({
-        id: alloc.id,
-        activityId: alloc.activityId,
-        percentage: alloc.percentage,
-        durationSeconds: durationMap[alloc.activityId] ?? 0,
-        activity: activityMap[alloc.activityId],
-      })),
+      success: true,
+      tasksUpdated,
+      warning,
+      block: {
+        id: result.block.id,
+        startTime: result.block.startTime,
+        endTime: result.block.endTime,
+        createdAt: result.block.createdAt,
+        elapsedSeconds,
+        allocations: result.insertedAllocations.map((alloc) => ({
+          id: alloc.id,
+          activityId: alloc.activityId,
+          percentage: alloc.percentage,
+          durationSeconds: durationMap[alloc.activityId] ?? 0,
+          activity: activityMap[alloc.activityId],
+        })),
+      }
     });
   } catch (err) {
     console.error("Failed to create time block:", err);

@@ -6,6 +6,9 @@ export const users = pgTable("users", {
   email: varchar("email", { length: 255 }).notNull(),
   name: varchar("name", { length: 255 }).notNull(),
   avatarUrl: text("avatar_url"),
+  googleRefreshToken: text("google_refresh_token"),
+  googleAccessToken: text("google_access_token"),
+  googleTokenExpiresAt: timestamp("google_token_expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

@@ -25,6 +25,7 @@ export function getGoogleAuthUrl() {
         scope: [
             "https://www.googleapis.com/auth/userinfo.profile",
             "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/tasks",
         ].join(" "),
     };
 
@@ -62,6 +63,36 @@ export async function getGoogleTokens(code: string) {
         expires_in: number;
         refresh_token: string;
         scope: string;
+    }>;
+}
+
+export async function refreshGoogleTokens(refresh_token: string) {
+    const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } = getGoogleConfig();
+    const url = "https://oauth2.googleapis.com/token";
+    const values = {
+        client_id: GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        refresh_token,
+        grant_type: "refresh_token",
+    };
+
+    const res = await fetch(url, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams(values).toString(),
+    });
+
+    if (!res.ok) {
+        throw new Error(`Failed to refresh Google tokens: ${await res.text()}`);
+    }
+
+    return res.json() as Promise<{
+        access_token: string;
+        expires_in: number;
+        scope: string;
+        token_type: string;
     }>;
 }
 

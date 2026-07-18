@@ -21,6 +21,9 @@ async function push() {
         "email" varchar(255) NOT NULL,
         "name" varchar(255) NOT NULL,
         "avatar_url" text,
+        "google_refresh_token" text,
+        "google_access_token" text,
+        "google_token_expires_at" timestamp with time zone,
         "created_at" timestamp with time zone DEFAULT now() NOT NULL
       );
     `);

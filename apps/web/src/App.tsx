@@ -15,6 +15,13 @@ type User = {
   avatarUrl: string;
 };
 
+type GoogleTask = {
+  id: string; // "listId|taskId"
+  title: string;
+  notes?: string;
+  taskListName: string;
+};
+
 type Activity = {
   id: number;
   name: string;
@@ -126,7 +133,7 @@ function moveDivider(
 
 // ─── App ─────────────────────────────────────────────────────────────────────
 
-type ModalView = "select" | "allocate";
+type ModalView = "select" | "allocate" | "tasks";
 
 export function App() {
   // Auth state
@@ -163,6 +170,12 @@ export function App() {
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [modalError, setModalError] = useState("");
+
+  // Log dialog — Step 3: Google Tasks
+  const [incompleteTasks, setIncompleteTasks] = useState<GoogleTask[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [tasksError, setTasksError] = useState("");
+  const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
 
   // Derived
   const hasTrackingStarted = trackingStartedAt !== null;
@@ -295,6 +308,7 @@ export function App() {
     setAllocations([]);
     setModalError("");
     setIsSaving(false);
+    setCompletedTaskIds([]);
   }
 
   function toggleActivity(activityId: number) {
@@ -309,7 +323,31 @@ export function App() {
     setModalView("allocate");
   }
 
-  // ── Log dialog — Step 2 (allocate) ───────────────────────────────────────
+  function toggleTask(id: string) {
+    setCompletedTaskIds((prev) =>
+      prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
+    );
+  }
+
+  async function loadTasks() {
+    setTasksLoading(true);
+    setTasksError("");
+    setModalView("tasks");
+    try {
+      const res = await customFetch(`${apiUrl}/tasks`);
+      if (res.ok) {
+        setIncompleteTasks(await res.json());
+      } else {
+        setTasksError("Could not load tasks from Google.");
+      }
+    } catch {
+      setTasksError("Network error while loading tasks.");
+    } finally {
+      setTasksLoading(false);
+    }
+  }
+
+  // ── Log dialog — Step 2/3 (allocate/tasks) ───────────────────────────────────────
 
   async function handleSave() {
     if (isSaving) return;
@@ -317,7 +355,7 @@ export function App() {
     setModalError("");
 
     try {
-      const response = await customFetch(`${apiUrl}/time-blocks`, {
+      const response = await customFetch(`${apiUrl}/log-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -325,17 +363,18 @@ export function App() {
             activityId: a.activityId,
             percentage: a.percentage,
           })),
+          completedTaskIds,
         }),
       });
 
-      const data = (await response.json()) as TimeBlockFull | { error: string };
+      const data = (await response.json()) as any;
 
       if (!response.ok) {
-        setModalError((data as { error: string }).error ?? "Could not save. Please try again.");
+        setModalError(data.error ?? "Could not save. Please try again.");
         return;
       }
 
-      const block = data as TimeBlockFull;
+      const block = data.block;
 
       // Advance tracking boundary to the server's authoritative end_time
       localStorage.setItem(trackingStartedAtStorageKey, block.endTime);
@@ -347,7 +386,7 @@ export function App() {
 
       closeModal();
       setFeedback(
-        `Saved — ${formatSeconds(block.elapsedSeconds)} logged across ${block.allocations.length} activit${block.allocations.length === 1 ? "y" : "ies"}.`,
+        `Saved — ${formatSeconds(block.elapsedSeconds)} logged across ${block.allocations.length} activit${block.allocations.length === 1 ? "y" : "ies"}.${data.warning ? " (Note: " + data.warning + ")" : ""}`
       );
       setError("");
     } catch {
@@ -570,7 +609,7 @@ export function App() {
                 onCancel={closeModal}
                 onContinue={proceedToAllocate}
               />
-            ) : (
+            ) : modalView === "allocate" ? (
               <AllocateView
                 activities={selectedActivities}
                 allocations={allocations}
@@ -578,11 +617,24 @@ export function App() {
                 totalMinutes={modalTotalMinutes}
                 onAllocationsChange={setAllocations}
                 onBack={() => setModalView("select")}
+                onNext={loadTasks}
+                isSaving={tasksLoading}
+                saveError={modalError}
+              />
+            ) : modalView === "tasks" ? (
+              <CompletedTasksView
+                incompleteTasks={incompleteTasks}
+                tasksLoading={tasksLoading}
+                tasksError={tasksError}
+                completedTaskIds={completedTaskIds}
+                onToggleTask={toggleTask}
+                onBack={() => setModalView("allocate")}
+                onSkip={() => { setCompletedTaskIds([]); handleSave(); }}
                 onSave={handleSave}
                 isSaving={isSaving}
                 saveError={modalError}
               />
-            )}
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -848,14 +900,14 @@ type AllocateViewProps = {
   totalMinutes: number;
   onAllocationsChange: (updated: Allocation[]) => void;
   onBack: () => void;
-  onSave: () => Promise<void>;
+  onNext: () => void;
   isSaving: boolean;
   saveError: string;
 };
 
 function AllocateView({
   activities, allocations, elapsedText, totalMinutes,
-  onAllocationsChange, onBack, onSave, isSaving, saveError,
+  onAllocationsChange, onBack, onNext, isSaving, saveError,
 }: AllocateViewProps) {
   return (
     <div className="flex flex-col">
@@ -927,11 +979,11 @@ function AllocateView({
         </button>
         <button
           type="button"
-          onClick={onSave}
+          onClick={onNext}
           disabled={isSaving}
           className="flex-1 rounded-xl bg-cyan-300 py-3 text-sm font-bold text-zinc-950 hover:bg-cyan-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {isSaving ? "Saving…" : "Save"}
+          {isSaving ? "Loading…" : "Next"}
         </button>
       </div>
     </div>
@@ -1020,6 +1072,107 @@ export function AllocationBar({ activities, allocations, onChange }: AllocationB
           </div>
         );
       })}
+    </div>
+  );
+}
+// ─── CompletedTasksView ─────────────────────────────────────────────────────────────
+
+type CompletedTasksViewProps = {
+  incompleteTasks: GoogleTask[];
+  tasksLoading: boolean;
+  tasksError: string;
+  completedTaskIds: string[];
+  onToggleTask: (id: string) => void;
+  onBack: () => void;
+  onSkip: () => void;
+  onSave: () => void;
+  isSaving: boolean;
+  saveError: string;
+};
+
+export function CompletedTasksView({
+  incompleteTasks, tasksLoading, tasksError, completedTaskIds,
+  onToggleTask, onBack, onSkip, onSave, isSaving, saveError
+}: CompletedTasksViewProps) {
+  return (
+    <div className="flex flex-col">
+      <div className="px-6 pt-6 pb-4 space-y-1">
+        <h2 className="text-xl font-bold text-zinc-50">Did you complete any tasks during this time?</h2>
+        <p className="text-sm text-zinc-400">Select any Google Tasks you finished.</p>
+      </div>
+
+      <div className="h-px bg-zinc-800" />
+
+      <div className="overflow-y-auto max-h-72 px-3 py-3 space-y-1 custom-scrollbar">
+        {tasksLoading ? (
+          <div className="flex justify-center py-10">
+            <div className="h-8 w-8 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
+          </div>
+        ) : tasksError ? (
+          <p className="px-3 py-6 text-center text-sm text-red-400">{tasksError}</p>
+        ) : incompleteTasks.length === 0 ? (
+          <p className="px-3 py-6 text-center text-sm text-zinc-500">No incomplete tasks found.</p>
+        ) : (
+          incompleteTasks.map((task) => {
+            const checked = completedTaskIds.includes(task.id);
+            return (
+              <label
+                key={task.id}
+                className={`flex items-start gap-3 rounded-xl px-4 py-3 cursor-pointer select-none transition-all duration-100 ${checked ? "bg-zinc-800 border border-zinc-700" : "bg-zinc-900/40 border border-transparent hover:bg-zinc-800/50"
+                  }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => onToggleTask(task.id)}
+                  className="mt-0.5 h-4 w-4 rounded accent-cyan-400 cursor-pointer flex-shrink-0"
+                />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-zinc-200">{task.title}</p>
+                  <p className="truncate text-xs font-semibold text-zinc-500 uppercase tracking-wider mt-0.5">{task.taskListName}</p>
+                </div>
+              </label>
+            );
+          })
+        )}
+      </div>
+
+      <div className="h-px bg-zinc-800" />
+
+      {saveError ? (
+        <p className="mx-6 mt-3 rounded-lg bg-red-950/60 border border-red-800 px-4 py-2.5 text-sm text-red-300">
+          {saveError}
+        </p>
+      ) : null}
+
+      <div className="flex gap-3 px-6 py-4">
+        <button
+          type="button"
+          onClick={onBack}
+          disabled={isSaving}
+          className="flex-[0.5] rounded-xl border border-zinc-700 bg-zinc-900 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-zinc-50 transition-colors shrink-0"
+        >
+          Back
+        </button>
+        <div className="flex-1 flex gap-3">
+          <button
+            type="button"
+            onClick={onSkip}
+            disabled={isSaving || tasksLoading}
+            className="flex-1 rounded-xl bg-zinc-800 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-700 transition-colors"
+          >
+            Skip
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={isSaving || tasksLoading}
+            className="flex-1 rounded-xl bg-cyan-300 py-3 text-sm font-bold text-zinc-950 hover:bg-cyan-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+          >
+            {isSaving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
