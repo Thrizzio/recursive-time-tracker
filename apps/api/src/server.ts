@@ -13,7 +13,7 @@ const app = express();
 const port = Number(process.env.PORT) || 3000;
 
 app.use(cors({
-  origin: process.env.VITE_WEB_URL ?? "http://localhost:5173",
+  origin: process.env.WEB_URL ?? "http://localhost:5173",
   credentials: true,
 }));
 app.use(express.json());
@@ -91,7 +91,7 @@ app.get("/auth/google/callback", async (req, res) => {
       path: "/",
     });
 
-    res.redirect(process.env.VITE_WEB_URL ?? "http://localhost:5173");
+    res.redirect(process.env.WEB_URL ?? "http://localhost:5173");
   } catch (error) {
     console.error("Auth callback error:", error);
     res.status(500).send("Authentication failed");
