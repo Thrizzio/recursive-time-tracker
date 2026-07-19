@@ -1,5 +1,9 @@
 // Replace lines 1-3 in apps/api/src/auth/google.ts
 
+import { db } from "../db/client.js";
+import { users } from "../db/schema.js";
+import { eq } from "drizzle-orm";
+
 export function getGoogleConfig() {
     const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
     const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
@@ -26,6 +30,7 @@ export function getGoogleAuthUrl() {
             "https://www.googleapis.com/auth/userinfo.profile",
             "https://www.googleapis.com/auth/userinfo.email",
             "https://www.googleapis.com/auth/tasks",
+            "https://www.googleapis.com/auth/calendar.readonly",
         ].join(" "),
     };
 
@@ -117,4 +122,28 @@ export async function getGoogleUser(id_token: string, access_token: string) {
         picture: string;
         locale: string;
     }>;
+}
+
+export async function getValidAccessToken(userId: number) {
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    if (!user || !user.googleAccessToken) {
+        throw new Error("No Google access token found for user");
+    }
+
+    if (user.googleTokenExpiresAt && user.googleTokenExpiresAt.getTime() < Date.now() + 60000) {
+        if (!user.googleRefreshToken) {
+            throw new Error("Google access token expired and no refresh token available");
+        }
+        const newTokens = await refreshGoogleTokens(user.googleRefreshToken);
+        const expiresAt = new Date(Date.now() + newTokens.expires_in * 1000);
+
+        await db.update(users).set({
+            googleAccessToken: newTokens.access_token,
+            googleTokenExpiresAt: expiresAt,
+        }).where(eq(users.id, userId));
+
+        return newTokens.access_token;
+    }
+
+    return user.googleAccessToken;
 }

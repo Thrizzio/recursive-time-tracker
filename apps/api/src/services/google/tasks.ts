@@ -1,31 +1,7 @@
 import { db } from "../../db/client.js";
 import { users } from "../../db/schema.js";
 import { eq } from "drizzle-orm";
-import { refreshGoogleTokens } from "../../auth/google.js";
-
-async function getValidAccessToken(userId: number) {
-    const [user] = await db.select().from(users).where(eq(users.id, userId));
-    if (!user || !user.googleAccessToken) {
-        throw new Error("No Google access token found for user");
-    }
-
-    if (user.googleTokenExpiresAt && user.googleTokenExpiresAt.getTime() < Date.now() + 60000) {
-        if (!user.googleRefreshToken) {
-            throw new Error("Google access token expired and no refresh token available");
-        }
-        const newTokens = await refreshGoogleTokens(user.googleRefreshToken);
-        const expiresAt = new Date(Date.now() + newTokens.expires_in * 1000);
-
-        await db.update(users).set({
-            googleAccessToken: newTokens.access_token,
-            googleTokenExpiresAt: expiresAt,
-        }).where(eq(users.id, userId));
-
-        return newTokens.access_token;
-    }
-
-    return user.googleAccessToken;
-}
+import { getValidAccessToken } from "../../auth/google.js";
 
 export type GoogleTask = {
     id: string; // Composite ID: `${taskListId}|${taskId}`
