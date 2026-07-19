@@ -22,6 +22,15 @@ type GoogleTask = {
   taskListName: string;
 };
 
+type GoogleEvent = {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  location?: string;
+  allDay: boolean;
+};
+
 type Activity = {
   id: number;
   name: string;
@@ -177,6 +186,16 @@ export function App() {
   const [tasksError, setTasksError] = useState("");
   const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
 
+  // Dashboard Agenda
+  const [todayEvents, setTodayEvents] = useState<GoogleEvent[]>([]);
+  const [todayEventsLoading, setTodayEventsLoading] = useState(false);
+  const [todayEventsError, setTodayEventsError] = useState("");
+
+  // Log dialog — Step (context): Google Calendar
+  const [retroEvents, setRetroEvents] = useState<GoogleEvent[]>([]);
+  const [retroEventsLoading, setRetroEventsLoading] = useState(false);
+  const [retroEventsError, setRetroEventsError] = useState("");
+
   // Derived
   const hasTrackingStarted = trackingStartedAt !== null;
   const boundary = trackingStartedAt ? new Date(trackingStartedAt) : null;
@@ -232,6 +251,31 @@ export function App() {
     }
   }
 
+  async function fetchCalendarEvents(start: string, end: string) {
+    const params = new URLSearchParams({ start, end });
+    const res = await customFetch(`${apiUrl}/google/calendar?${params.toString()}`);
+    if (!res.ok) throw new Error("Could not load events");
+    return (await res.json()) as GoogleEvent[];
+  }
+
+  async function fetchTodayEvents() {
+    setTodayEventsLoading(true);
+    setTodayEventsError("");
+    try {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
+
+      const events = await fetchCalendarEvents(start.toISOString(), end.toISOString());
+      setTodayEvents(events);
+    } catch {
+      setTodayEventsError("Could not load calendar events.");
+    } finally {
+      setTodayEventsLoading(false);
+    }
+  }
+
   // ── Effects ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -242,6 +286,7 @@ export function App() {
     if (user) {
       fetchActivities().catch(() => setError("Could not load activities."));
       fetchTimeBlocks();
+      fetchTodayEvents();
     }
   }, [user]);
 
@@ -298,8 +343,17 @@ export function App() {
     setSelectedActivityIds([]);
     setAllocations([]);
     setModalError("");
+    setCompletedTaskIds([]);
     setModalView("select");
     setIsModalOpen(true);
+
+    // Fetch retrospective events for context
+    setRetroEventsLoading(true);
+    setRetroEventsError("");
+    fetchCalendarEvents(boundary.toISOString(), now.toISOString())
+      .then((events) => setRetroEvents(events))
+      .catch(() => setRetroEventsError("Failed to fetch context events."))
+      .finally(() => setRetroEventsLoading(false));
   }
 
   function closeModal() {
@@ -521,14 +575,22 @@ export function App() {
         ) : null}
 
         {/* ── Timeline ────────────────────────────────────────────────────── */}
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold">Today's blocks</h2>
-          <Timeline
-            blocks={timeBlocks}
-            loading={timeBlocksLoading}
-            error={timeBlocksError}
+        <div className="space-y-8">
+          <Agenda
+            title="Today's Schedule"
+            events={todayEvents}
+            loading={todayEventsLoading}
+            error={todayEventsError}
           />
-        </section>
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Today's blocks</h2>
+            <Timeline
+              blocks={timeBlocks}
+              loading={timeBlocksLoading}
+              error={timeBlocksError}
+            />
+          </section>
+        </div>
 
         {/* ── Create activity form ────────────────────────────────────────── */}
         <section className="space-y-4">
@@ -605,6 +667,9 @@ export function App() {
                 activities={activities}
                 elapsedText={modalElapsedText}
                 selectedActivityIds={selectedActivityIds}
+                retroEvents={retroEvents}
+                retroEventsLoading={retroEventsLoading}
+                retroEventsError={retroEventsError}
                 onToggle={toggleActivity}
                 onCancel={closeModal}
                 onContinue={proceedToAllocate}
@@ -815,13 +880,16 @@ type SelectViewProps = {
   activities: Activity[];
   elapsedText: string;
   selectedActivityIds: number[];
+  retroEvents: GoogleEvent[];
+  retroEventsLoading: boolean;
+  retroEventsError: string;
   onToggle: (id: number) => void;
   onCancel: () => void;
   onContinue: () => void;
 };
 
 function SelectView({
-  activities, elapsedText, selectedActivityIds, onToggle, onCancel, onContinue,
+  activities, elapsedText, selectedActivityIds, retroEvents, retroEventsLoading, retroEventsError, onToggle, onCancel, onContinue,
 }: SelectViewProps) {
   return (
     <div className="flex flex-col">
@@ -834,6 +902,16 @@ function SelectView({
       </div>
 
       <div className="h-px bg-zinc-800" />
+
+      <div className="px-6 py-4 border-b border-zinc-800 bg-zinc-900/30">
+        <Agenda
+          title="Events during this block"
+          events={retroEvents}
+          loading={retroEventsLoading}
+          error={retroEventsError}
+          emptyMessage="No overlapping calendar events."
+        />
+      </div>
 
       <div className="overflow-y-auto max-h-72 px-3 py-3 space-y-1">
         {activities.length === 0 ? (
@@ -1174,5 +1252,53 @@ export function CompletedTasksView({
         </div>
       </div>
     </div>
+  );
+}
+// ─── Agenda ───────────────────────────────────────────────────────────────────
+
+type AgendaProps = {
+  events: GoogleEvent[];
+  loading: boolean;
+  error: string;
+  title: string;
+  emptyMessage?: string;
+};
+
+export function Agenda({ events, loading, error, title, emptyMessage = "No events scheduled." }: AgendaProps) {
+  return (
+    <section className="space-y-3">
+      <h2 className="text-lg font-semibold">{title}</h2>
+      <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3">
+        {loading ? (
+          <div className="flex justify-center py-4">
+            <div className="h-6 w-6 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
+          </div>
+        ) : error ? (
+          <p className="py-4 text-center text-sm text-red-400">{error}</p>
+        ) : events.length === 0 ? (
+          <p className="py-4 text-center text-sm text-zinc-500">{emptyMessage}</p>
+        ) : (
+          <div className="divide-y divide-zinc-800/60">
+            {events.map((evt) => {
+              const dateStart = new Date(evt.start);
+              const dateEnd = new Date(evt.end);
+              return (
+                <div key={evt.id} className="flex flex-col gap-1 py-3 first:pt-1 last:pb-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-medium text-zinc-200">{evt.title}</p>
+                    <p className="text-xs font-medium tabular-nums text-zinc-400 shrink-0">
+                      {evt.allDay ? "All day" : `${formatTime(dateStart)} - ${formatTime(dateEnd)}`}
+                    </p>
+                  </div>
+                  {evt.location && (
+                    <p className="text-xs text-zinc-500 truncate">{evt.location}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }

@@ -7,6 +7,7 @@ import { activities, activity_allocations, timeBlocks, users } from "./db/schema
 import { getGoogleAuthUrl, getGoogleTokens, getGoogleUser } from "./auth/google.js";
 import { createSession, getSessionUserId, deleteSession } from "./auth/session.js";
 import { getIncompleteTasks, completeTasks } from "./services/google/tasks.js";
+import { listEvents } from "./services/google/calendar.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -341,6 +342,27 @@ app.post("/log-session", requireAuth, async (request, response) => {
   } catch (err) {
     console.error("Failed to create time block:", err);
     response.status(500).json({ error: "Could not save time block. Please try again." });
+  }
+});
+
+// ─── GET /google/calendar ─────────────────────────────────────────────────────
+
+app.get("/google/calendar", requireAuth, async (req, res) => {
+  const userId = res.locals.userId;
+  const start = req.query.start as string;
+  const end = req.query.end as string;
+
+  if (!start || !end) {
+    res.status(400).json({ error: "start and end query parameters are required" });
+    return;
+  }
+
+  try {
+    const events = await listEvents(userId, start, end);
+    res.json(events);
+  } catch (err) {
+    console.error("Failed to fetch calendar events:", err);
+    res.status(500).json({ error: "Could not load calendar events" });
   }
 });
 
