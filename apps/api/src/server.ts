@@ -102,7 +102,7 @@ app.get("/auth/google/callback", async (req, res) => {
 app.get("/auth/me", requireAuth, async (req, res) => {
   const userId = res.locals.userId;
   const [user] = await db.select().from(users).where(eq(users.id, userId));
-  res.json({ id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl });
+  res.json({ id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl, trackingStartedAt: user.trackingStartedAt });
 });
 
 app.post("/auth/logout", async (req, res) => {
