@@ -13,6 +13,7 @@ type User = {
   email: string;
   name: string;
   avatarUrl: string;
+  trackingStartedAt: string | null;
 };
 
 type GoogleTask = {
@@ -65,7 +66,6 @@ type TimeBlockFull = {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
-const trackingStartedAtStorageKey = "chronolog.trackingStartedAt";
 const MIN_SEGMENT_PCT = 2;
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
@@ -163,9 +163,7 @@ export function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Session / timer
-  const [trackingStartedAt, setTrackingStartedAt] = useState<string | null>(() =>
-    localStorage.getItem(trackingStartedAtStorageKey),
-  );
+  const trackingStartedAt = user?.trackingStartedAt ?? null;
   const [now, setNow] = useState(() => new Date());
 
   // Log dialog — Step 1: select activities
@@ -325,13 +323,31 @@ export function App() {
 
   // ── Start tracking ────────────────────────────────────────────────────────
 
-  function startTracking() {
-    const startedAt = new Date().toISOString();
-    localStorage.setItem(trackingStartedAtStorageKey, startedAt);
-    setTrackingStartedAt(startedAt);
-    setNow(new Date(startedAt));
-    setFeedback(`Tracking started at ${formatTime(new Date(startedAt))}.`);
-    setError("");
+  async function startTracking() {
+    try {
+      const res = await customFetch(`${apiUrl}/tracking/start`, { method: "POST" });
+      if (res.ok) {
+        await checkAuth(); // Refresh user state
+        const data = await res.json();
+        setNow(new Date(data.trackingStartedAt));
+        setFeedback(`Tracking started at ${formatTime(new Date(data.trackingStartedAt))}.`);
+        setError("");
+      }
+    } catch {
+      setError("Could not start tracking.");
+    }
+  }
+
+  async function resetTracking() {
+    try {
+      const res = await customFetch(`${apiUrl}/tracking/reset`, { method: "POST" });
+      if (res.ok) {
+        await checkAuth(); // Refresh user state
+        setFeedback("Tracking reset successfully.");
+      }
+    } catch {
+      setError("Could not reset tracking.");
+    }
   }
 
   // ── Log dialog — Step 1 (select) ──────────────────────────────────────────
@@ -430,9 +446,8 @@ export function App() {
 
       const block = data.block;
 
-      // Advance tracking boundary to the server's authoritative end_time
-      localStorage.setItem(trackingStartedAtStorageKey, block.endTime);
-      setTrackingStartedAt(block.endTime);
+      // Update authenticated user state to advance the boundary
+      await checkAuth();
       setNow(new Date(block.endTime));
 
       // Refresh timeline — prepend the new block (it's the newest)
@@ -562,7 +577,16 @@ export function App() {
                   {timeSinceBoundary}
                 </p>
               </div>
-              <p className="pb-1 text-right text-sm text-zinc-400">{boundaryLabel}</p>
+              <div className="flex flex-col items-end gap-1 pb-1">
+                <p className="text-right text-sm text-zinc-400">{boundaryLabel}</p>
+                <button
+                  type="button"
+                  onClick={resetTracking}
+                  className="text-xs text-zinc-500 hover:text-zinc-300 underline underline-offset-2 decoration-zinc-700 hover:decoration-zinc-400 transition-colors"
+                >
+                  Reset tracking
+                </button>
+              </div>
             </div>
             <button
               className="mt-4 w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 hover:bg-cyan-200 transition-colors duration-150 active:scale-[0.98]"

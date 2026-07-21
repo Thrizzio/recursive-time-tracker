@@ -16,16 +16,17 @@ async function push() {
 
     await client.query(`
       CREATE TABLE "users" (
-        "id" serial PRIMARY KEY NOT NULL,
-        "google_id" varchar(255) NOT NULL UNIQUE,
-        "email" varchar(255) NOT NULL,
-        "name" varchar(255) NOT NULL,
-        "avatar_url" text,
-        "google_refresh_token" text,
-        "google_access_token" text,
-        "google_token_expires_at" timestamp with time zone,
-        "created_at" timestamp with time zone DEFAULT now() NOT NULL
-      );
+      "id" serial PRIMARY KEY NOT NULL,
+      "google_id" varchar(255) NOT NULL UNIQUE,
+      "email" varchar(255) NOT NULL,
+      "name" varchar(255) NOT NULL,
+      "avatar_url" text,
+      "google_refresh_token" text,
+      "google_access_token" text,
+      "google_token_expires_at" timestamp with time zone,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "tracking_started_at" timestamp with time zone
+    );
     `);
     console.log("  ✓ users");
 
