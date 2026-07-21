@@ -10,6 +10,9 @@ export const users = pgTable("users", {
   googleAccessToken: text("google_access_token"),
   googleTokenExpiresAt: timestamp("google_token_expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  trackingStartedAt: timestamp("tracking_started_at", {
+    withTimezone: true,
+  }),
 });
 
 export const sessions = pgTable("sessions", {

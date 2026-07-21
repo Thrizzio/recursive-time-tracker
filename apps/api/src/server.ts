@@ -157,6 +157,31 @@ app.get("/tasks", requireAuth, async (req, res) => {
   }
 });
 
+// ─── Tracking State ──────────────────────────────────────────────────────────
+
+app.post("/tracking/start", requireAuth, async (req, res) => {
+  const userId = res.locals.userId;
+  const now = new Date();
+
+  await db
+    .update(users)
+    .set({ trackingStartedAt: now })
+    .where(eq(users.id, userId));
+
+  res.json({ trackingStartedAt: now });
+});
+
+app.post("/tracking/reset", requireAuth, async (req, res) => {
+  const userId = res.locals.userId;
+
+  await db
+    .update(users)
+    .set({ trackingStartedAt: null })
+    .where(eq(users.id, userId));
+
+  res.json({ success: true, trackingStartedAt: null });
+});
+
 // ─── Time blocks  ─────────────────────────────────────────────────────────────
 
 /**
@@ -239,16 +264,15 @@ app.post("/log-session", requireAuth, async (request, response) => {
 
   const endTime = new Date(); // captured once — single source of truth for "now"
 
-  // Find the most recent time block's end_time for THIS user
-  const [latestBlock] = await db
-    .select({ endTime: timeBlocks.endTime })
-    .from(timeBlocks)
-    .where(eq(timeBlocks.userId, userId))
-    .orderBy(desc(timeBlocks.endTime))
+  // Fetch tracking state for THIS user
+  const [currentUser] = await db
+    .select({ trackingStartedAt: users.trackingStartedAt })
+    .from(users)
+    .where(eq(users.id, userId))
     .limit(1);
 
-  // If no block exists yet, start_time = end_time (elapsed = 0, first block ever)
-  const startTime = latestBlock ? latestBlock.endTime : endTime;
+  // Fallback to endTime if trackingStartedAt is null
+  const startTime = currentUser?.trackingStartedAt ? currentUser.trackingStartedAt : endTime;
   const elapsedSeconds = Math.round((endTime.getTime() - startTime.getTime()) / 1000);
 
   // ── 3. Compute duration_seconds per allocation ────────────────────────────
@@ -297,6 +321,12 @@ app.post("/log-session", requireAuth, async (request, response) => {
           })),
         )
         .returning();
+
+      // Update the user's tracking state to immediately begin the next contiguous block
+      await tx
+        .update(users)
+        .set({ trackingStartedAt: endTime })
+        .where(eq(users.id, userId));
 
       return { block, insertedAllocations };
     });
