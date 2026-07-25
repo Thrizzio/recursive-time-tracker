@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { TimerPanel } from "./components/timer/TimerPanel";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -522,162 +523,176 @@ export function App() {
 
   return (
     <main className="min-h-screen bg-zinc-950 px-5 py-8 text-zinc-50 pb-20">
-      <section className="mx-auto flex max-w-md flex-col gap-8">
+      {/* Desktop: Two-column layout, Mobile: Stacked layout */}
+      <div className="mx-auto flex max-w-6xl gap-8">
+        {/* Main content */}
+        <section className="flex-1 max-w-md flex flex-col gap-8">
 
-        {/* ── Header ─────────────────────────────────────────────────────── */}
-        <header className="flex items-center justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-wide text-cyan-400">Chronolog</p>
-            <h1 className="text-2xl font-bold leading-tight">Time Tracker</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex flex-col items-end hidden sm:flex">
-              <span className="text-sm font-semibold">{user.name}</span>
-              <button onClick={logout} className="text-xs text-zinc-400 hover:text-zinc-200">Sign out</button>
-            </div>
-            {user.avatarUrl ? (
-              <img src={user.avatarUrl} alt={user.name} className="h-10 w-10 rounded-full border border-zinc-700 bg-zinc-800" />
-            ) : (
-              <div className="h-10 w-10 rounded-full border border-zinc-700 bg-zinc-800 flex items-center justify-center font-bold text-zinc-400">
-                {user.name.charAt(0)}
-              </div>
-            )}
-            <button onClick={logout} className="sm:hidden text-xs font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-900 px-2 py-1 rounded">Logout</button>
-          </div>
-        </header>
-
-        {/* ── Start tracking CTA ─────────────────────────────────────────── */}
-        {!hasTrackingStarted ? (
-          <section className="space-y-3 rounded-md border border-cyan-700 bg-cyan-950/40 px-4 py-4">
+          {/* ── Header ─────────────────────────────────────────────────────── */}
+          <header className="flex items-center justify-between">
             <div className="space-y-1">
-              <h2 className="text-lg font-semibold">Start tracking</h2>
-              <p className="text-sm leading-6 text-cyan-100">
-                Press this once when you want Chronolog to begin counting time.
-              </p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-cyan-400">Chronolog</p>
+              <h1 className="text-2xl font-bold leading-tight">Time Tracker</h1>
             </div>
-            <button
-              className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 hover:bg-cyan-200 transition-colors"
-              onClick={startTracking}
-              type="button"
-            >
-              Start tracking
-            </button>
-          </section>
-        ) : null}
+            <div className="flex items-center gap-3">
+              <div className="flex flex-col items-end hidden sm:flex">
+                <span className="text-sm font-semibold">{user.name}</span>
+                <button onClick={logout} className="text-xs text-zinc-400 hover:text-zinc-200">Sign out</button>
+              </div>
+              {user.avatarUrl ? (
+                <img src={user.avatarUrl} alt={user.name} className="h-10 w-10 rounded-full border border-zinc-700 bg-zinc-800" />
+              ) : (
+                <div className="h-10 w-10 rounded-full border border-zinc-700 bg-zinc-800 flex items-center justify-center font-bold text-zinc-400">
+                  {user.name.charAt(0)}
+                </div>
+              )}
+              <button onClick={logout} className="sm:hidden text-xs font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-900 px-2 py-1 rounded">Logout</button>
+            </div>
+          </header>
 
-        {/* ── Live timer + Log Activity ────────────────────────────────────── */}
-        {hasTrackingStarted ? (
-          <section className="rounded-md border border-zinc-800 bg-zinc-900 px-4 py-4">
-            <div className="flex items-end justify-between gap-4">
+          {/* ── Timer Panel (Mobile only) ──────────────────────────────────── */}
+          <div className="lg:hidden">
+            <TimerPanel />
+          </div>
+
+          {/* ── Start tracking CTA ─────────────────────────────────────────── */}
+          {!hasTrackingStarted ? (
+            <section className="space-y-3 rounded-md border border-cyan-700 bg-cyan-950/40 px-4 py-4">
               <div className="space-y-1">
-                <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-400">
-                  Since last log
-                </h2>
-                <p className="text-4xl font-semibold tabular-nums text-zinc-50">
-                  {timeSinceBoundary}
+                <h2 className="text-lg font-semibold">Start tracking</h2>
+                <p className="text-sm leading-6 text-cyan-100">
+                  Press this once when you want Chronolog to begin counting time.
                 </p>
               </div>
-              <div className="flex flex-col items-end gap-1 pb-1">
-                <p className="text-right text-sm text-zinc-400">{boundaryLabel}</p>
-                <button
-                  type="button"
-                  onClick={resetTracking}
-                  className="text-xs text-zinc-500 hover:text-zinc-300 underline underline-offset-2 decoration-zinc-700 hover:decoration-zinc-400 transition-colors"
-                >
-                  Reset tracking
-                </button>
+              <button
+                className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 hover:bg-cyan-200 transition-colors"
+                onClick={startTracking}
+                type="button"
+              >
+                Start tracking
+              </button>
+            </section>
+          ) : null}
+
+          {/* ── Live timer + Log Activity ────────────────────────────────────── */}
+          {hasTrackingStarted ? (
+            <section className="rounded-md border border-zinc-800 bg-zinc-900 px-4 py-4">
+              <div className="flex items-end justify-between gap-4">
+                <div className="space-y-1">
+                  <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-400">
+                    Since last log
+                  </h2>
+                  <p className="text-4xl font-semibold tabular-nums text-zinc-50">
+                    {timeSinceBoundary}
+                  </p>
+                </div>
+                <div className="flex flex-col items-end gap-1 pb-1">
+                  <p className="text-right text-sm text-zinc-400">{boundaryLabel}</p>
+                  <button
+                    type="button"
+                    onClick={resetTracking}
+                    className="text-xs text-zinc-500 hover:text-zinc-300 underline underline-offset-2 decoration-zinc-700 hover:decoration-zinc-400 transition-colors"
+                  >
+                    Reset tracking
+                  </button>
+                </div>
               </div>
-            </div>
-            <button
-              className="mt-4 w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 hover:bg-cyan-200 transition-colors duration-150 active:scale-[0.98]"
-              onClick={openModal}
-              type="button"
-            >
-              Log Activity
-            </button>
-          </section>
-        ) : null}
+              <button
+                className="mt-4 w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 hover:bg-cyan-200 transition-colors duration-150 active:scale-[0.98]"
+                onClick={openModal}
+                type="button"
+              >
+                Log Activity
+              </button>
+            </section>
+          ) : null}
 
-        {/* ── Timeline ────────────────────────────────────────────────────── */}
-        <div className="space-y-8">
-          <Agenda
-            title="Today's Schedule"
-            events={todayEvents}
-            loading={todayEventsLoading}
-            error={todayEventsError}
-          />
-          <section className="space-y-3">
-            <h2 className="text-lg font-semibold">Today's blocks</h2>
-            <Timeline
-              blocks={timeBlocks}
-              loading={timeBlocksLoading}
-              error={timeBlocksError}
+          {/* ── Timeline ────────────────────────────────────────────────────── */}
+          <div className="space-y-8">
+            <Agenda
+              title="Today's Schedule"
+              events={todayEvents}
+              loading={todayEventsLoading}
+              error={todayEventsError}
             />
-          </section>
-        </div>
-
-        {/* ── Create activity form ────────────────────────────────────────── */}
-        <section className="space-y-4">
-          <h2 className="text-lg font-semibold">Activities</h2>
-          <p className="text-sm text-zinc-400">
-            Create the activities you want to track before logging time.
-          </p>
-          <form className="space-y-4" onSubmit={createActivity}>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-zinc-200">Name</span>
-              <input
-                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-3 text-base text-zinc-50 outline-none focus:border-cyan-300"
-                maxLength={100}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Study"
-                value={name}
+            <section className="space-y-3">
+              <h2 className="text-lg font-semibold">Today's blocks</h2>
+              <Timeline
+                blocks={timeBlocks}
+                loading={timeBlocksLoading}
+                error={timeBlocksError}
               />
-            </label>
-            <label className="block space-y-2">
-              <span className="text-sm font-medium text-zinc-200">Color</span>
-              <input
-                className="h-12 w-20 rounded-md border border-zinc-700 bg-zinc-900 p-1"
-                onChange={(e) => setColor(e.target.value)}
-                type="color"
-                value={color}
-              />
-            </label>
+            </section>
+          </div>
 
-            {error ? <p className="text-sm text-red-300">{error}</p> : null}
-            {feedback ? <p className="text-sm text-emerald-300">{feedback}</p> : null}
-
-            <button
-              className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={isSubmitting}
-              type="submit"
-            >
-              {isSubmitting ? "Adding…" : "Add activity"}
-            </button>
-          </form>
-
-          {/* Saved activities list */}
-          {activities.length === 0 ? (
-            <p className="rounded-md border border-dashed border-zinc-700 px-4 py-5 text-sm text-zinc-400">
-              No activities yet.
+          {/* ── Create activity form ────────────────────────────────────────── */}
+          <section className="space-y-4">
+            <h2 className="text-lg font-semibold">Activities</h2>
+            <p className="text-sm text-zinc-400">
+              Create the activities you want to track before logging time.
             </p>
-          ) : (
-            <ul className="space-y-2">
-              {activities.map((activity) => (
-                <li
-                  className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
-                  key={activity.id}
-                >
-                  <span
-                    className="h-4 w-4 flex-none rounded-full"
-                    style={{ backgroundColor: activity.color }}
-                  />
-                  <span className="truncate font-medium">{activity.name}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+            <form className="space-y-4" onSubmit={createActivity}>
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-zinc-200">Name</span>
+                <input
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-3 text-base text-zinc-50 outline-none focus:border-cyan-300"
+                  maxLength={100}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Study"
+                  value={name}
+                />
+              </label>
+              <label className="block space-y-2">
+                <span className="text-sm font-medium text-zinc-200">Color</span>
+                <input
+                  className="h-12 w-20 rounded-md border border-zinc-700 bg-zinc-900 p-1"
+                  onChange={(e) => setColor(e.target.value)}
+                  type="color"
+                  value={color}
+                />
+              </label>
+
+              {error ? <p className="text-sm text-red-300">{error}</p> : null}
+              {feedback ? <p className="text-sm text-emerald-300">{feedback}</p> : null}
+
+              <button
+                className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSubmitting}
+                type="submit"
+              >
+                {isSubmitting ? "Adding…" : "Add activity"}
+              </button>
+            </form>
+
+            {/* Saved activities list */}
+            {activities.length === 0 ? (
+              <p className="rounded-md border border-dashed border-zinc-700 px-4 py-5 text-sm text-zinc-400">
+                No activities yet.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {activities.map((activity) => (
+                  <li
+                    className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
+                    key={activity.id}
+                  >
+                    <span
+                      className="h-4 w-4 flex-none rounded-full"
+                      style={{ backgroundColor: activity.color }}
+                    />
+                    <span className="truncate font-medium">{activity.name}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </section>
-      </section>
+
+        {/* Timer Panel (Desktop only) */}
+        <aside className="hidden lg:block w-80 flex-shrink-0">
+          <TimerPanel />
+        </aside>
+      </div>
 
       {/* ── Modal overlay ────────────────────────────────────────────────────── */}
       {isModalOpen ? (
