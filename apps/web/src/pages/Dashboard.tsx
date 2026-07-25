@@ -9,6 +9,7 @@ import { Link } from "react-router-dom";
 import { TimerPanel } from "../components/timer/TimerPanel";
 import { TaskPanel } from "../components/tasks/TaskPanel";
 import { useTasks } from "../hooks/useTasks";
+import * as tasksService from "../services/tasks";
 import type { GoogleTask } from "../types/tasks";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -166,7 +167,7 @@ export function Dashboard({ user, onUserUpdate, onLogout }: DashboardProps) {
   const [feedback, setFeedback] = useState("");
 
   // Tasks integration
-  const { tasks, loading: tasksLoading, error: tasksError } = useTasks({
+  const { tasks, loading: tasksLoading, error: tasksError, refreshTasks } = useTasks({
     selectedListId: user?.selectedTaskListId ?? null,
     enabled: !!user
   });
@@ -404,6 +405,7 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
     setModalError("");
 
     try {
+      // 1. Save time block first (this should never fail due to task issues)
       const response = await customFetch(`${apiUrl}/log-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -412,7 +414,6 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
             activityId: a.activityId,
             percentage: a.percentage,
           })),
-          completedTaskIds,
         }),
       });
 
@@ -425,16 +426,27 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
 
       const block = data.block;
 
-      // Update authenticated user state to advance the boundary
+      // 2. Try to complete Google Tasks separately
+      let taskWarning = "";
+      if (completedTaskIds.length > 0) {
+        try {
+          await tasksService.completeTasks(completedTaskIds);
+          // Refresh task cache to show updated tasks
+          await refreshTasks();
+        } catch (taskError) {
+          console.error("Failed to complete Google Tasks:", taskError);
+          taskWarning = " (Note: Tasks could not be marked complete in Google Tasks)";
+        }
+      }
+
+      // 3. Update UI state
       await onUserUpdate();
       setNow(new Date(block.endTime));
-
-      // Refresh timeline — prepend the new block (it's the newest)
       setTimeBlocks((prev) => [block, ...prev]);
 
       closeModal();
       setFeedback(
-        `Saved — ${formatSeconds(block.elapsedSeconds)} logged across ${block.allocations.length} activit${block.allocations.length === 1 ? "y" : "ies"}.${data.warning ? " (Note: " + data.warning + ")" : ""}`
+        `Saved — ${formatSeconds(block.elapsedSeconds)} logged across ${block.allocations.length} activit${block.allocations.length === 1 ? "y" : "ies"}.${taskWarning}`
       );
       setError("");
     } catch {
@@ -474,6 +486,14 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
               <h1 className="text-2xl font-bold leading-tight">Time Tracker</h1>
             </div>
             <div className="flex items-center gap-3">
+              <button
+                onClick={refreshTasks}
+                disabled={tasksLoading || !user?.selectedTaskListId}
+                className="text-xs font-medium text-zinc-400 hover:text-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed underline underline-offset-2"
+                title="Refresh tasks"
+              >
+                {tasksLoading ? "Refreshing..." : "Refresh Tasks"}
+              </button>
               <Link
                 to="/settings"
                 className="text-xs font-medium text-zinc-400 hover:text-zinc-200 underline underline-offset-2"

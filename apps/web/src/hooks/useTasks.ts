@@ -15,6 +15,7 @@ interface UseTasksReturn {
   loading: boolean;
   error: string;
   refetch: () => Promise<void>;
+  refreshTasks: () => Promise<void>;
 }
 
 /**
@@ -108,6 +109,30 @@ export function useTasks({ selectedListId, enabled = true }: UseTasksOptions): U
     }
   };
 
+  const refreshTasks = async () => {
+    if (!selectedListId) {
+      setTasks([]);
+      return;
+    }
+
+    // Clear cache first to force fresh fetch
+    localStorage.removeItem(CACHE_KEY);
+    
+    setLoading(true);
+    setError('');
+    
+    try {
+      const data = await tasksService.getTasks();
+      setTasks(data);
+      saveToCache(data, selectedListId);
+    } catch (err) {
+      setError('Could not refresh tasks.');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!enabled) return;
     
@@ -126,7 +151,8 @@ export function useTasks({ selectedListId, enabled = true }: UseTasksOptions): U
     tasks,
     loading,
     error,
-    refetch: fetchTasks
+    refetch: fetchTasks,
+    refreshTasks
   };
 }
 

@@ -103,12 +103,19 @@ export async function getIncompleteTasks(userId: number): Promise<GoogleTask[]> 
     return allTasks;
 }
 
-export async function completeTasks(userId: number, taskListId: string, taskIds: string[]) {
+export async function completeTasks(userId: number, taskIds: string[]) {
     if (taskIds.length === 0) return;
+    
+    // Get user's selected task list
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    if (!user.selectedTaskListId) {
+        throw new Error("No task list selected");
+    }
+    
     const token = await getValidAccessToken(userId);
 
     const results = await Promise.allSettled(taskIds.map(async (taskId) => {
-        const res = await fetch(`https://tasks.googleapis.com/tasks/v1/lists/${taskListId}/tasks/${taskId}`, {
+        const res = await fetch(`https://tasks.googleapis.com/tasks/v1/lists/${user.selectedTaskListId}/tasks/${taskId}`, {
             method: "PATCH",
             headers: {
                 Authorization: `Bearer ${token}`,

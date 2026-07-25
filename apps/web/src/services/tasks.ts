@@ -39,3 +39,15 @@ export async function saveSelectedTaskList(taskListId: string): Promise<void> {
   });
   if (!res.ok) throw new Error('Failed to save task list preference');
 }
+
+/**
+ * Complete tasks in Google Tasks
+ */
+export async function completeTasks(taskIds: string[]): Promise<void> {
+  const res = await fetchWithCredentials(`${apiUrl}/tasks/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskIds }),
+  });
+  if (!res.ok) throw new Error('Failed to complete tasks');
+}
