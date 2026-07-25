@@ -13,6 +13,7 @@ export const users = pgTable("users", {
   trackingStartedAt: timestamp("tracking_started_at", {
     withTimezone: true,
   }),
+  selectedTaskListId: varchar("selected_task_list_id", { length: 255 }),
 });
 
 export const sessions = pgTable("sessions", {

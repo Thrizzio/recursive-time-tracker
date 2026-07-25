@@ -25,7 +25,8 @@ async function push() {
       "google_access_token" text,
       "google_token_expires_at" timestamp with time zone,
       "created_at" timestamp with time zone DEFAULT now() NOT NULL,
-      "tracking_started_at" timestamp with time zone
+      "tracking_started_at" timestamp with time zone,
+      "selected_task_list_id" varchar(255)
     );
     `);
     console.log("  ✓ users");

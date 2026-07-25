@@ -4,12 +4,70 @@ import { eq } from "drizzle-orm";
 import { getValidAccessToken } from "../../auth/google.js";
 
 export type GoogleTask = {
-    id: string; // Composite ID: `${taskListId}|${taskId}`
+    id: string;
     title: string;
     notes?: string;
-    taskListName: string;
+    due?: string;
+    status: string;
 };
 
+export type GoogleTaskList = {
+    id: string;
+    title: string;
+};
+
+/**
+ * Fetch all available Google Task Lists for a user
+ */
+export async function getTaskLists(userId: number): Promise<GoogleTaskList[]> {
+    const token = await getValidAccessToken(userId);
+
+    const listsRes = await fetch("https://tasks.googleapis.com/tasks/v1/users/@me/lists", {
+        headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!listsRes.ok) throw new Error("Failed to fetch task lists");
+    const listsData = (await listsRes.json()) as { items?: any[] };
+    const taskLists = listsData.items || [];
+
+    return taskLists.map((list) => ({
+        id: list.id,
+        title: list.title,
+    }));
+}
+
+/**
+ * Fetch incomplete tasks from a specific task list
+ */
+export async function getTasksFromList(userId: number, taskListId: string): Promise<GoogleTask[]> {
+    const token = await getValidAccessToken(userId);
+
+    const tasksRes = await fetch(
+        `https://tasks.googleapis.com/tasks/v1/lists/${taskListId}/tasks?showCompleted=false`,
+        {
+            headers: { Authorization: `Bearer ${token}` }
+        }
+    );
+    
+    if (!tasksRes.ok) {
+        throw new Error("Failed to fetch tasks from list");
+    }
+    
+    const tasksData = (await tasksRes.json()) as { items?: any[] };
+    const tasks = tasksData.items || [];
+
+    return tasks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        notes: t.notes,
+        due: t.due,
+        status: t.status,
+    }));
+}
+
+/**
+ * Legacy function - fetches tasks from all lists
+ * @deprecated Use getTasksFromList with user's selectedTaskListId instead
+ */
 export async function getIncompleteTasks(userId: number): Promise<GoogleTask[]> {
     const token = await getValidAccessToken(userId);
 
@@ -31,10 +89,11 @@ export async function getIncompleteTasks(userId: number): Promise<GoogleTask[]> 
             if (tasksData.items) {
                 for (const t of tasksData.items) {
                     allTasks.push({
-                        id: `${list.id}|${t.id}`,
+                        id: t.id,
                         title: t.title,
                         notes: t.notes,
-                        taskListName: list.title,
+                        due: t.due,
+                        status: t.status,
                     });
                 }
             }
@@ -44,14 +103,11 @@ export async function getIncompleteTasks(userId: number): Promise<GoogleTask[]> 
     return allTasks;
 }
 
-export async function completeTasks(userId: number, compositeTaskIds: string[]) {
-    if (compositeTaskIds.length === 0) return;
+export async function completeTasks(userId: number, taskListId: string, taskIds: string[]) {
+    if (taskIds.length === 0) return;
     const token = await getValidAccessToken(userId);
 
-    const results = await Promise.allSettled(compositeTaskIds.map(async (compositeId) => {
-        const [taskListId, taskId] = compositeId.split("|");
-        if (!taskListId || !taskId) throw new Error(`Invalid task ID format: ${compositeId}`);
-
+    const results = await Promise.allSettled(taskIds.map(async (taskId) => {
         const res = await fetch(`https://tasks.googleapis.com/tasks/v1/lists/${taskListId}/tasks/${taskId}`, {
             method: "PATCH",
             headers: {
