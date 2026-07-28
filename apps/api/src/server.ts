@@ -6,7 +6,7 @@ import { db } from "./db/client.js";
 import { activities, activity_allocations, timeBlocks, users } from "./db/schema.js";
 import { getGoogleAuthUrl, getGoogleTokens, getGoogleUser } from "./auth/google.js";
 import { createSession, getSessionUserId, deleteSession } from "./auth/session.js";
-import { getIncompleteTasks, completeTasks } from "./services/google/tasks.js";
+import { getIncompleteTasks, completeTasks, getTaskLists, getTasksFromList } from "./services/google/tasks.js";
 import { listEvents } from "./services/google/calendar.js";
 
 const app = express();
@@ -102,7 +102,14 @@ app.get("/auth/google/callback", async (req, res) => {
 app.get("/auth/me", requireAuth, async (req, res) => {
   const userId = res.locals.userId;
   const [user] = await db.select().from(users).where(eq(users.id, userId));
-  res.json({ id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl, trackingStartedAt: user.trackingStartedAt });
+  res.json({ 
+    id: user.id, 
+    email: user.email, 
+    name: user.name, 
+    avatarUrl: user.avatarUrl, 
+    trackingStartedAt: user.trackingStartedAt,
+    selectedTaskListId: user.selectedTaskListId 
+  });
 });
 
 app.post("/auth/logout", async (req, res) => {
@@ -146,14 +153,74 @@ app.post("/activities", requireAuth, async (request, response) => {
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────
 
+app.get("/tasks/lists", requireAuth, async (req, res) => {
+  const userId = res.locals.userId;
+  try {
+    const lists = await getTaskLists(userId);
+    res.json(lists);
+  } catch (error) {
+    console.error("Failed to fetch task lists:", error);
+    res.status(500).json({ error: "Could not fetch task lists from Google." });
+  }
+});
+
 app.get("/tasks", requireAuth, async (req, res) => {
   const userId = res.locals.userId;
   try {
-    const tasks = await getIncompleteTasks(userId);
+    // Get user's selected task list
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    
+    // If no list selected, return empty array
+    if (!user.selectedTaskListId) {
+      res.json([]);
+      return;
+    }
+    
+    const tasks = await getTasksFromList(userId, user.selectedTaskListId);
     res.json(tasks);
   } catch (error) {
     console.error("Failed to fetch tasks:", error);
     res.status(500).json({ error: "Could not fetch tasks from Google." });
+  }
+});
+
+app.post("/settings/task-list", requireAuth, async (req, res) => {
+  const userId = res.locals.userId;
+  const taskListId = typeof req.body.taskListId === "string" ? req.body.taskListId.trim() : "";
+
+  if (!taskListId) {
+    res.status(400).json({ error: "taskListId is required." });
+    return;
+  }
+
+  try {
+    await db
+      .update(users)
+      .set({ selectedTaskListId: taskListId })
+      .where(eq(users.id, userId));
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Failed to update task list preference:", error);
+    res.status(500).json({ error: "Could not save task list preference." });
+  }
+});
+
+app.post("/tasks/complete", requireAuth, async (req, res) => {
+  const userId = res.locals.userId;
+  const taskIds = Array.isArray(req.body.taskIds) ? req.body.taskIds : [];
+
+  if (taskIds.length === 0) {
+    res.status(400).json({ error: "taskIds array is required." });
+    return;
+  }
+
+  try {
+    await completeTasks(userId, taskIds);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Failed to complete tasks:", error);
+    res.status(500).json({ error: "Could not complete tasks in Google." });
   }
 });
 
@@ -202,7 +269,6 @@ app.post("/log-session", requireAuth, async (request, response) => {
   const userId = response.locals.userId;
 
   const rawAllocations: unknown = request.body.allocations;
-  const completedTaskIds: string[] = request.body.completedTaskIds || [];
 
   if (!Array.isArray(rawAllocations) || rawAllocations.length === 0) {
     response.status(400).json({ error: "allocations must be a non-empty array." });
@@ -332,18 +398,7 @@ app.post("/log-session", requireAuth, async (request, response) => {
     });
 
     // ── 5. Complete Google Tasks (Secondary) ──────────────────────────────
-    let tasksUpdated = true;
-    let warning = undefined;
-
-    if (completedTaskIds.length > 0) {
-      try {
-        await completeTasks(userId, completedTaskIds);
-      } catch (err) {
-        console.error("Failed to complete Google Tasks:", err);
-        tasksUpdated = false;
-        warning = "Time block was saved successfully, but one or more Google Tasks could not be updated.";
-      }
-    }
+    // Task completion is now handled separately via POST /tasks/complete
 
     // ── 6. Build enriched response ────────────────────────────────────────
 
@@ -353,8 +408,6 @@ app.post("/log-session", requireAuth, async (request, response) => {
 
     response.status(201).json({
       success: true,
-      tasksUpdated,
-      warning,
       block: {
         id: result.block.id,
         startTime: result.block.startTime,
