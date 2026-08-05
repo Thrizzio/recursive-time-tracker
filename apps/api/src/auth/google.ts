@@ -1,9 +1,10 @@
-// Replace lines 1-3 in apps/api/src/auth/google.ts
-
 import { db } from "../db/client.js";
 import { users } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 
+
+
+//just gets the identity of our app.
 export function getGoogleConfig() {
     const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
     const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
@@ -15,18 +16,19 @@ export function getGoogleConfig() {
 
     return { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_CALLBACK_URL };
 }
-
+//building our url , so the scope is all the permissions we want, here after we give 
+//accept the permissions , the auth code is sent alongside our callback URL
 export function getGoogleAuthUrl() {
     const { GOOGLE_CLIENT_ID, GOOGLE_CALLBACK_URL } = getGoogleConfig();
 
     const rootUrl = "https://accounts.google.com/o/oauth2/v2/auth";
     const options = {
-        redirect_uri: GOOGLE_CALLBACK_URL,
-        client_id: GOOGLE_CLIENT_ID,
-        access_type: "offline",
-        response_type: "code",
-        prompt: "consent",
-        scope: [
+        redirect_uri: GOOGLE_CALLBACK_URL,//after auth is done send code here
+        client_id: GOOGLE_CLIENT_ID,//this is chronolog
+        access_type: "offline",//we want a refresh token
+        response_type: "code",//give me the authorization code
+        prompt: "consent",//always ask for consent
+        scope: [//the things we want permissions for
             "https://www.googleapis.com/auth/userinfo.profile",
             "https://www.googleapis.com/auth/userinfo.email",
             "https://www.googleapis.com/auth/tasks",
@@ -46,10 +48,12 @@ export async function getGoogleTokens(code: string) {
         code,
         client_id: GOOGLE_CLIENT_ID,
         client_secret: GOOGLE_CLIENT_SECRET,
-        redirect_uri: GOOGLE_CALLBACK_URL,
+        redirect_uri: GOOGLE_CALLBACK_URL,//confirms this authorization code belongs to the same OAuth flow and callback URL.
         grant_type: "authorization_code",
     };
 
+    //exchange code for tokens
+    //just fetching to tokens here
     const res = await fetch(url, {
         method: "POST",
         headers: {

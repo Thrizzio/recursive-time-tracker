@@ -25,7 +25,6 @@ app.get("/health", (_request, response) => {
   response.json({ status: "ok", service: "chronolog-api" });
 });
 
-// ─── Auth Middleware ──────────────────────────────────────────────────────────
 
 async function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
   const sessionId = req.cookies.chronolog_session;
@@ -44,12 +43,17 @@ async function requireAuth(req: express.Request, res: express.Response, next: ex
 
 // ─── Auth Routes ──────────────────────────────────────────────────────────────
 
+
+//this will redirect to google
 app.get("/auth/google", (req, res) => {
   res.redirect(getGoogleAuthUrl());
 });
 
+
+//endpoint run by google as this is our redirect URI
 app.get("/auth/google/callback", async (req, res) => {
   const code = req.query.code as string;
+  //so after auth , the code is sent as a part of the redirect URI
   if (!code) {
     res.status(400).send("No code provided");
     return;
@@ -62,7 +66,7 @@ app.get("/auth/google/callback", async (req, res) => {
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
 
     let [user] = await db.select().from(users).where(eq(users.googleId, googleUser.id));
-    if (!user) {
+    if (!user) {//if no user exists we create the user
       [user] = await db.insert(users).values({
         googleId: googleUser.id,
         email: googleUser.email,
@@ -72,7 +76,7 @@ app.get("/auth/google/callback", async (req, res) => {
         googleRefreshToken: tokens.refresh_token ?? null,
         googleTokenExpiresAt: expiresAt,
       }).returning();
-    } else {
+    } else {//if user exists we update the user
       [user] = await db.update(users).set({
         name: googleUser.name,
         avatarUrl: googleUser.picture,
@@ -99,16 +103,18 @@ app.get("/auth/google/callback", async (req, res) => {
   }
 });
 
+
+
 app.get("/auth/me", requireAuth, async (req, res) => {
   const userId = res.locals.userId;
   const [user] = await db.select().from(users).where(eq(users.id, userId));
-  res.json({ 
-    id: user.id, 
-    email: user.email, 
-    name: user.name, 
-    avatarUrl: user.avatarUrl, 
+  res.json({
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    avatarUrl: user.avatarUrl,
     trackingStartedAt: user.trackingStartedAt,
-    selectedTaskListId: user.selectedTaskListId 
+    selectedTaskListId: user.selectedTaskListId
   });
 });
 
@@ -164,18 +170,20 @@ app.get("/tasks/lists", requireAuth, async (req, res) => {
   }
 });
 
+
+
 app.get("/tasks", requireAuth, async (req, res) => {
   const userId = res.locals.userId;
   try {
     // Get user's selected task list
     const [user] = await db.select().from(users).where(eq(users.id, userId));
-    
+
     // If no list selected, return empty array
     if (!user.selectedTaskListId) {
       res.json([]);
       return;
     }
-    
+
     const tasks = await getTasksFromList(userId, user.selectedTaskListId);
     res.json(tasks);
   } catch (error) {
