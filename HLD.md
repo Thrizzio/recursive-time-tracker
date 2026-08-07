@@ -396,6 +396,19 @@ Task data is cached on the client with a TTL to reduce unnecessary Google API re
 
 ---
 
+## Development Workflow
+
+Chronolog follows a feature branch workflow.
+
+- `main` contains production-ready code.
+- New features and bug fixes are developed on separate feature branches.
+- Changes are committed incrementally with descriptive commit messages.
+- Features are merged into `main` through Pull Requests after review and testing.
+
+This workflow minimizes regressions and keeps the main branch deployable.
+
+---
+
 # 12. Current Limitations
 
 Current limitations include:

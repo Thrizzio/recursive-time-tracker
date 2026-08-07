@@ -64,6 +64,50 @@ services/
 server.ts
 ```
 
+# Development Workflow
+
+Chronolog uses a Git feature branch workflow.
+
+## Branch Strategy
+
+- `main` – Stable production branch
+- Feature branches – One branch per feature or bug fix
+
+Example:
+
+feature/google-task-integration
+feature/task-cache
+fix/render-auth
+
+## Development Process
+
+1. Create a feature branch.
+2. Implement a single feature.
+3. Commit incrementally with descriptive messages.
+4. Push branch to GitHub.
+5. Open a Pull Request.
+6. Review and test changes.
+7. Merge into `main`.
+8. Automatic deployment from `main`.
+
+## Commit Style
+
+Examples:
+
+- Add Google Tasks integration
+- Cache Google Tasks locally
+- Fix OAuth callback redirect
+- Add task refresh button
+
+## Deployment
+
+- Every merge to `main` triggers:
+  - Backend deployment on Render.
+  - Frontend deployment on Vercel.
+
+```
+
+
 ### Responsibilities
 
 **auth/**
