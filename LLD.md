@@ -64,48 +64,60 @@ services/
 server.ts
 ```
 
-# Development Workflow
+# Git Workflow
 
-Chronolog uses a Git feature branch workflow.
+Chronolog is developed using a Git Feature Branch Workflow.
 
 ## Branch Strategy
 
-- `main` – Stable production branch
-- Feature branches – One branch per feature or bug fix
-
-Example:
-
-feature/google-task-integration
-feature/task-cache
-fix/render-auth
-
-## Development Process
-
-1. Create a feature branch.
-2. Implement a single feature.
-3. Commit incrementally with descriptive messages.
-4. Push branch to GitHub.
-5. Open a Pull Request.
-6. Review and test changes.
-7. Merge into `main`.
-8. Automatic deployment from `main`.
-
-## Commit Style
+- **main** – Stable production branch.
+- **feature/<feature-name>** – New feature development.
+- **bugfix/<bug-name>** – Bug fixes.
 
 Examples:
 
-- Add Google Tasks integration
-- Cache Google Tasks locally
-- Fix OAuth callback redirect
+- feature/google-task-integration
+- feature/task-cache
+- bugfix/render-auth
+
+## Development Process
+
+1. Clone the repository.
+2. Create a feature branch using `git checkout -b feature/<name>`.
+3. Implement the feature.
+4. Commit changes incrementally using descriptive commit messages.
+5. Push the branch to GitHub.
+6. Open a Pull Request (PR).
+7. Review and test the implementation.
+8. Merge the Pull Request into `main`.
+9. Automatic deployment is triggered after merging.
+
+## Commit Message Examples
+
+- Add Google OAuth authentication
+- Implement Google Tasks integration
+- Add task caching
+- Fix Render deployment issue
 - Add task refresh button
 
-## Deployment
+## Pull Requests
 
-- Every merge to `main` triggers:
-  - Backend deployment on Render.
-  - Frontend deployment on Vercel.
+Every feature is merged through a Pull Request. Pull Requests are used to:
 
-```
+- Review code changes.
+- Discuss implementation.
+- Keep `main` production-ready.
+- Maintain project history.
+
+## Version Control Benefits
+
+Git provides:
+
+- Branch isolation
+- Change history
+- Easy rollback
+- Collaborative development
+- Traceable feature implementation
 
 
 ### Responsibilities
