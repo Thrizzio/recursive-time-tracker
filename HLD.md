@@ -384,6 +384,74 @@ Rather than continuously recording activity, Chronolog assumes time is always pa
 
 ---
 
+## Asynchronous Data Fetching
+
+Chronolog communicates with the backend asynchronously using the Fetch API and the async/await programming model.
+
+Frontend components do not directly perform API requests. Instead, reusable service modules encapsulate HTTP communication, while custom React hooks manage loading states, error states, caching, and data synchronization.
+
+This separation provides:
+
+- Reusable API communication
+- Centralized loading and error management
+- Cleaner React components
+- Better maintainability
+
+---
+
+## React State Synchronization
+
+Chronolog uses React's `useEffect` hook to synchronize component state with external systems such as backend APIs, browser timers, localStorage, and browser events.
+
+Side effects are isolated from rendering logic to keep React components predictable. Each effect has a clearly defined dependency list so that it only executes when the required state changes.
+
+Primary uses of `useEffect` include:
+
+- Initial data loading
+- Synchronizing timer updates
+- Listening to browser storage events
+- Fetching backend data
+- Cleaning up timers and event listeners
+
+---     
+
+## Frontend Component Architecture
+
+The frontend follows a component-based architecture where pages are composed from smaller, reusable UI components.
+
+Each component has a single responsibility, improving readability, maintainability, and reusability.
+
+Examples include:
+
+- Dashboard – Main application page that coordinates data and user interactions.
+- Timeline – Displays previously logged time blocks.
+- ActivityModal – Handles retrospective time logging.
+- Header – Displays user information and navigation.
+- Settings – Manages application preferences.
+
+Data flows from parent components to child components through props, while reusable logic is extracted into custom React hooks.
+
+---
+
+## Client State Management
+
+Chronolog uses React's `useState` hook to manage component-level state.
+
+State is used to store:
+
+- Authentication information
+- Activities
+- Tasks
+- Calendar events
+- Loading indicators
+- Error messages
+- Modal visibility
+- Timer state
+
+Whenever state changes, React automatically re-renders only the affected components, ensuring the user interface stays synchronized with application data.
+
+---
+
 ### Google Integration
 
 Google Tasks and Calendar are integrated directly into the logging workflow to reduce context switching.
@@ -406,6 +474,26 @@ Chronolog follows a feature branch workflow.
 - Features are merged into `main` through Pull Requests after review and testing.
 
 This workflow minimizes regressions and keeps the main branch deployable.
+
+---
+
+## Environment Variables and Secrets Management
+
+Chronolog separates configuration from application code using environment variables. Sensitive values such as database credentials, OAuth client credentials, and deployment URLs are never hardcoded into the codebase.
+
+The backend retrieves configuration values through dedicated configuration functions before communicating with external services. Missing or invalid configuration causes application startup or authentication requests to fail immediately rather than allowing the application to continue in an invalid state.
+
+The frontend only receives non-sensitive configuration values required for client-side operation. All sensitive credentials remain exclusively on the backend.
+
+Example environment variables include:
+
+- DATABASE_URL
+- GOOGLE_CLIENT_ID
+- GOOGLE_CLIENT_SECRET
+- GOOGLE_CALLBACK_URL
+- WEB_URL
+
+A `.env.example` file is maintained to document the required configuration without exposing any secrets.
 
 ---
 

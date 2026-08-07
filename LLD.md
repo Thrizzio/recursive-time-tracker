@@ -621,6 +621,26 @@ Database
 
 ---
 
+## Environment Variables and Secrets Management
+
+Chronolog separates configuration from application code using environment variables. Sensitive values such as database credentials, OAuth client credentials, and deployment URLs are never hardcoded into the codebase.
+
+The backend retrieves configuration values through dedicated configuration functions before communicating with external services. Missing or invalid configuration causes application startup or authentication requests to fail immediately rather than allowing the application to continue in an invalid state.
+
+The frontend only receives non-sensitive configuration values required for client-side operation. All sensitive credentials remain exclusively on the backend.
+
+Example environment variables include:
+
+- DATABASE_URL
+- GOOGLE_CLIENT_ID
+- GOOGLE_CLIENT_SECRET
+- GOOGLE_CALLBACK_URL
+- WEB_URL
+
+A `.env.example` file is maintained to document the required configuration without exposing any secrets.
+
+---
+
 # 12. Local Caching
 
 Google Tasks are cached using localStorage.
