@@ -300,7 +300,7 @@ Potential future enhancements include:
 
 ## Constraints
 
-- Google API rate limits.
+- Google API rate limits
 - Browser-based application.
 - Google OAuth required for integrations.
 
