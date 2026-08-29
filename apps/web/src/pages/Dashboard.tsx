@@ -8,6 +8,7 @@ import {
 import { Link } from "react-router-dom";
 import { TimerPanel } from "../components/timer/TimerPanel";
 import { TaskPanel } from "../components/tasks/TaskPanel";
+import { Sidebar, MenuButton } from "../components/Sidebar";
 import { useTasks } from "../hooks/useTasks";
 import * as tasksService from "../services/tasks";
 import type { GoogleTask } from "../types/tasks";
@@ -79,7 +80,7 @@ type TimeBlockFull = {
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const MIN_SEGMENT_PCT = 2;
 /** 2 hours in milliseconds — used for tracking reminder boundaries */
-const TWO_HOURS_MS = 2 * 60 * 1000;
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
@@ -169,6 +170,7 @@ export function Dashboard({ user, onUserUpdate, onLogout }: DashboardProps) {
   const [timeBlocks, setTimeBlocks] = useState<TimeBlockFull[]>([]);
   const [timeBlocksLoading, setTimeBlocksLoading] = useState(true);
   const [timeBlocksError, setTimeBlocksError] = useState("");
+  // Tracking-level error/feedback (not activity form — that moved to Activities page)
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
 
@@ -178,10 +180,8 @@ export function Dashboard({ user, onUserUpdate, onLogout }: DashboardProps) {
     enabled: !!user
   });
 
-  // Activity creation form
-  const [name, setName] = useState("");
-  const [color, setColor] = useState("#38bdf8");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Sidebar navigation
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Session / timer
   const trackingStartedAt = user?.trackingStartedAt ?? null;
@@ -401,36 +401,8 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
     const result = await requestNotificationPermission();
     setNotifPermission(result === "unsupported" ? "unsupported" : result);
   }, []);
-
-
-
-  async function createActivity(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError("");
-    setFeedback("");
-    setIsSubmitting(true);
-    try {
-      const response = await customFetch(`${apiUrl}/activities`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, color }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setError(data.error ?? "Could not create activity.");
-        return;
-      }
-      setActivities((prev) => [...prev, data]);
-      setName("");
-      setFeedback(`Created ${data.name}.`);
-    } catch {
-      setError("Could not create activity.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
   // ── Start tracking ────────────────────────────────────────────────────────
+
 
   async function startTracking() {
     try {
@@ -581,12 +553,14 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
 
   return (
     <main className="min-h-screen bg-zinc-950 px-5 py-8 text-zinc-50 pb-20">
+      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
       {/* Desktop: Three-column layout with Tasks Panel, Mobile: Stacked layout */}
       <div className="mx-auto flex max-w-7xl gap-8">
         {/* Left Sidebar: Tasks Panel */}
-        <TaskPanel 
-          tasks={tasks} 
-          loading={tasksLoading} 
+        <TaskPanel
+          tasks={tasks}
+          loading={tasksLoading}
           error={tasksError}
           hasSelectedList={!!user?.selectedTaskListId}
         />
@@ -596,9 +570,12 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
 
           {/* ── Header ─────────────────────────────────────────────────────── */}
           <header className="flex items-center justify-between">
-            <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wide text-cyan-400">Chronolog</p>
-              <h1 className="text-2xl font-bold leading-tight">Time Tracker</h1>
+            <div className="flex items-center gap-3">
+              <MenuButton onClick={() => setSidebarOpen(true)} />
+              <div className="space-y-0.5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-400">Chronolog</p>
+                <h1 className="text-2xl font-bold leading-tight">Time Tracker</h1>
+              </div>
             </div>
             <div className="flex items-center gap-3">
               {/* Enable notifications — only shown when permission not yet decided */}
@@ -715,67 +692,6 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
             </section>
           </div>
 
-          {/* ── Create activity form ────────────────────────────────────────── */}
-          <section className="space-y-4">
-            <h2 className="text-lg font-semibold">Activities</h2>
-            <p className="text-sm text-zinc-400">
-              Create the activities you want to track before logging time.
-            </p>
-            <form className="space-y-4" onSubmit={createActivity}>
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-zinc-200">Name</span>
-                <input
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-3 text-base text-zinc-50 outline-none focus:border-cyan-300"
-                  maxLength={100}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Study"
-                  value={name}
-                />
-              </label>
-              <label className="block space-y-2">
-                <span className="text-sm font-medium text-zinc-200">Color</span>
-                <input
-                  className="h-12 w-20 rounded-md border border-zinc-700 bg-zinc-900 p-1"
-                  onChange={(e) => setColor(e.target.value)}
-                  type="color"
-                  value={color}
-                />
-              </label>
-
-              {error ? <p className="text-sm text-red-300">{error}</p> : null}
-              {feedback ? <p className="text-sm text-emerald-300">{feedback}</p> : null}
-
-              <button
-                className="w-full rounded-md bg-cyan-300 px-4 py-3 text-base font-semibold text-zinc-950 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={isSubmitting}
-                type="submit"
-              >
-                {isSubmitting ? "Adding…" : "Add activity"}
-              </button>
-            </form>
-
-            {/* Saved activities list */}
-            {activities.length === 0 ? (
-              <p className="rounded-md border border-dashed border-zinc-700 px-4 py-5 text-sm text-zinc-400">
-                No activities yet.
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {activities.map((activity) => (
-                  <li
-                    className="flex items-center gap-3 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
-                    key={activity.id}
-                  >
-                    <span
-                      className="h-4 w-4 flex-none rounded-full"
-                      style={{ backgroundColor: activity.color }}
-                    />
-                    <span className="truncate font-medium">{activity.name}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
         </section>
 
         {/* Timer Panel (Desktop only) */}

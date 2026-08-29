@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Dashboard } from './pages/Dashboard';
 import { Settings } from './pages/Settings';
+import { Activities } from './pages/Activities';
 
 type User = {
   id: number;
@@ -96,26 +97,34 @@ export function App() {
 
   return (
     <Routes>
-      <Route 
-        path="/" 
+      {/* Legacy root path — redirect to /dashboard */}
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+      <Route
+        path="/dashboard"
         element={
-          <Dashboard 
-            user={user} 
-            onUserUpdate={checkAuth} 
-            onLogout={logout} 
+          <Dashboard
+            user={user}
+            onUserUpdate={checkAuth}
+            onLogout={logout}
           />
-        } 
+        }
       />
-      <Route 
-        path="/settings" 
+      <Route
+        path="/activities"
+        element={<Activities onLogout={logout} />}
+      />
+      <Route
+        path="/settings"
         element={
-          <Settings 
-            user={user} 
-            onUserUpdate={checkAuth} 
+          <Settings
+            user={user}
+            onUserUpdate={checkAuth}
           />
-        } 
+        }
       />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
 }
+
