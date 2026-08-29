@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { showNotification, playNotificationSound } from '../utils/notifications';
 import { TimerState, UseTimerReturn } from '../types/timer';
 import { 
   DEFAULT_TIMER_STATE, 
@@ -43,6 +44,11 @@ export function useTimer(): UseTimerReturn {
       };
       setState(completedState);
       saveState(completedState);
+
+      // Notify once — the running→completed transition is a one-way gate,
+      // so this block can only execute once per timer run.
+      showNotification('Timer finished', 'Time to take a short break.');
+      playNotificationSound();
     }
   }, [state, saveState]);
   

@@ -11,6 +11,10 @@ import { TaskPanel } from "../components/tasks/TaskPanel";
 import { useTasks } from "../hooks/useTasks";
 import * as tasksService from "../services/tasks";
 import type { GoogleTask } from "../types/tasks";
+import {
+  requestNotificationPermission,
+  showNotification,
+} from "../utils/notifications";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +78,8 @@ type TimeBlockFull = {
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 const MIN_SEGMENT_PCT = 2;
+/** 2 hours in milliseconds — used for tracking reminder boundaries */
+const TWO_HOURS_MS = 2 * 60 * 1000;
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
@@ -212,6 +218,28 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
   const [retroEventsLoading, setRetroEventsLoading] = useState(false);
   const [retroEventsError, setRetroEventsError] = useState("");
 
+  // Browser notification permission state
+  const [notifPermission, setNotifPermission] = useState<
+    NotificationPermission | "unsupported"
+  >(() => {
+    if (typeof Notification === "undefined") return "unsupported";
+    return Notification.permission;
+  });
+
+  // Ref for the 2-hour reminder timeout — cleaned up on tracking change/unmount
+  const reminderTimeoutRef = useRef<number | null>(null);
+
+  // Which boundary index has already produced a notification for the CURRENT
+  // tracking session. Lives in a ref so it survives Dashboard rerenders and
+  // React StrictMode's deliberate setup→cleanup→setup double-invocation
+  // without resetting to -1. Only reset when trackingStartedAt changes to a
+  // genuinely new value (new session).
+  const lastFiredBoundaryIdxRef = useRef<number>(-1);
+
+  // The value of trackingStartedAt that lastFiredBoundaryIdxRef was last reset
+  // for. Used to detect a real session change vs. a mere re-render.
+  const lastResetForSessionRef = useRef<string | null>(null);
+
   // Derived
   const hasTrackingStarted = trackingStartedAt !== null;
   const boundary = trackingStartedAt ? new Date(trackingStartedAt) : null;
@@ -287,7 +315,94 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
     return () => window.clearInterval(id);
   }, []);
 
-  // ── Activity creation ─────────────────────────────────────────────────────
+  // ── 2-hour tracking reminder ───────────────────────────────────────────────
+  //
+  // Algorithm (no fixed setInterval — everything is derived from timestamps):
+  //
+  //   1. When trackingStartedAt changes (new session / reset), cancel any
+  //      pending timeout and restart the scheduler.
+  //   2. Compute elapsed = now - startedAt.
+  //   3. Find the index of the LAST boundary that should have fired:
+  //        lastBoundaryIdx = floor(elapsed / TWO_HOURS_MS)
+  //   4. If lastBoundaryIdx > lastFiredBoundaryIdxRef.current (boundary not yet
+  //      notified this session), emit exactly ONE notification and record it.
+  //   5. Schedule a timeout for the NEXT boundary:
+  //        delay = (lastBoundaryIdx + 1) * TWO_HOURS_MS - elapsed
+  //   6. When the timeout fires, re-run steps 2-5.
+  //
+  // Deduplication survives rerenders because lastFiredBoundaryIdxRef is a ref
+  // (not a local variable). It is only reset when trackingStartedAt is a new
+  // value, detected via lastResetForSessionRef — so React StrictMode's
+  // deliberate setup→cleanup→setup cycle does NOT wipe the counter.
+
+  useEffect(() => {
+    if (!trackingStartedAt) {
+      // Tracking is off — cancel any pending reminder.
+      if (reminderTimeoutRef.current !== null) {
+        window.clearTimeout(reminderTimeoutRef.current);
+        reminderTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    // Reset deduplication counter ONLY when this is a genuinely new session,
+    // not merely a re-execution of the effect for the same trackingStartedAt
+    // value (e.g. StrictMode double-invoke, or future React re-runs).
+    if (lastResetForSessionRef.current !== trackingStartedAt) {
+      lastFiredBoundaryIdxRef.current = -1;
+      lastResetForSessionRef.current = trackingStartedAt;
+    }
+
+    const startMs = new Date(trackingStartedAt).getTime();
+
+    function scheduleNextReminder() {
+      const elapsed = Date.now() - startMs;
+      if (elapsed < 0) return; // clock skew guard
+
+      const lastBoundaryIdx = Math.floor(elapsed / TWO_HOURS_MS);
+
+      // Only notify if this boundary hasn't already been notified this session.
+      // lastFiredBoundaryIdxRef.current persists across effect re-executions,
+      // so a second scheduler spawned by StrictMode or a rerender cannot
+      // fire for a boundary that the first scheduler already handled.
+      if (lastBoundaryIdx > lastFiredBoundaryIdxRef.current) {
+        showNotification(
+          "How was the last 2 hours spent?",
+          "Take a moment to log your time."
+        );
+        lastFiredBoundaryIdxRef.current = lastBoundaryIdx;
+      }
+
+      // Schedule a timeout for the NEXT future boundary.
+      const nextBoundaryMs = (lastBoundaryIdx + 1) * TWO_HOURS_MS;
+      const delay = nextBoundaryMs - elapsed;
+
+      reminderTimeoutRef.current = window.setTimeout(() => {
+        scheduleNextReminder();
+      }, delay);
+    }
+
+    scheduleNextReminder();
+
+    return () => {
+      // Cancel the pending timeout on cleanup (tracking reset, new session,
+      // or unmount). The deduplication ref is NOT reset here — that only
+      // happens above when trackingStartedAt itself changes to a new value.
+      if (reminderTimeoutRef.current !== null) {
+        window.clearTimeout(reminderTimeoutRef.current);
+        reminderTimeoutRef.current = null;
+      }
+    };
+  }, [trackingStartedAt]); // Re-run only when the tracking session changes
+
+  // ── Enable notifications handler ──────────────────────────────────────────
+
+  const handleEnableNotifications = useCallback(async () => {
+    const result = await requestNotificationPermission();
+    setNotifPermission(result === "unsupported" ? "unsupported" : result);
+  }, []);
+
+
 
   async function createActivity(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -486,6 +601,16 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
               <h1 className="text-2xl font-bold leading-tight">Time Tracker</h1>
             </div>
             <div className="flex items-center gap-3">
+              {/* Enable notifications — only shown when permission not yet decided */}
+              {notifPermission === "default" && (
+                <button
+                  onClick={handleEnableNotifications}
+                  className="text-xs font-medium text-zinc-400 hover:text-zinc-200 underline underline-offset-2"
+                  title="Get reminded every 2 hours to log your time"
+                >
+                  Enable notifications
+                </button>
+              )}
               <button
                 onClick={refreshTasks}
                 disabled={tasksLoading || !user?.selectedTaskListId}
