@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { showNotification, playNotificationSound } from '../utils/notifications';
+import { getNotificationPrefs } from '../utils/notificationPrefs';
 import { TimerState, UseTimerReturn } from '../types/timer';
-import { 
-  DEFAULT_TIMER_STATE, 
-  calculateRemainingTime, 
-  validateDuration, 
-  validateTimerState, 
-  STORAGE_KEY 
+import {
+  DEFAULT_TIMER_STATE,
+  calculateRemainingTime,
+  validateDuration,
+  validateTimerState,
+  STORAGE_KEY
 } from '../utils/timer';
 import { createStorageManager } from '../utils/storage';
 
@@ -47,8 +48,10 @@ export function useTimer(): UseTimerReturn {
 
       // Notify once — the running→completed transition is a one-way gate,
       // so this block can only execute once per timer run.
-      showNotification('Timer finished', 'Time to take a short break.');
-      playNotificationSound();
+      if (getNotificationPrefs().timerNotificationsEnabled) {
+        showNotification('Timer finished', 'Time to take a short break.');
+        playNotificationSound();
+      }
     }
   }, [state, saveState]);
   

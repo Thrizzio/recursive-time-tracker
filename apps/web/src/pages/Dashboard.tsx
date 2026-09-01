@@ -12,10 +12,8 @@ import { Sidebar, MenuButton } from "../components/Sidebar";
 import { useTasks } from "../hooks/useTasks";
 import * as tasksService from "../services/tasks";
 import type { GoogleTask } from "../types/tasks";
-import {
-  requestNotificationPermission,
-  showNotification,
-} from "../utils/notifications";
+import { showNotification } from "../utils/notifications";
+import { getNotificationPrefs, subscribeToPrefs } from "../utils/notificationPrefs";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -226,14 +224,6 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
   const [retroEventsLoading, setRetroEventsLoading] = useState(false);
   const [retroEventsError, setRetroEventsError] = useState("");
 
-  // Browser notification permission state
-  const [notifPermission, setNotifPermission] = useState<
-    NotificationPermission | "unsupported"
-  >(() => {
-    if (typeof Notification === "undefined") return "unsupported";
-    return Notification.permission;
-  });
-
   // Ref for the 2-hour reminder timeout — cleared on cleanup
   const reminderTimeoutRef = useRef<number | null>(null);
 
@@ -318,29 +308,27 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
   //
   //   1. When trackingStartedAt changes (new session / reset), cancel any
   //      pending timeout and restart the scheduler.
-  //   2. Compute elapsed = Date.now() - startedAt.
-  //   3. Find the index of the last boundary that should have fired:
+  //   2. Bail early if trackingRemindersEnabled is false.
+  //   3. Compute elapsed = Date.now() - startedAt.
+  //   4. Find the index of the last boundary that should have fired:
   //        completedBoundaryIdx = floor(elapsed / TWO_HOURS_MS)
   //        (0 = haven't reached 2h yet, 1 = 2h reached, 2 = 4h reached, …)
-  //   4. If completedBoundaryIdx > globalLastFiredBoundaryIdx, the boundary
-  //      has not been notified yet — emit ONE notification and record the index.
-  //   5. Schedule a timeout for the next future boundary:
-  //        delay = (completedBoundaryIdx + 1) * TWO_HOURS_MS - elapsed
-  //   6. When the timeout fires, re-run steps 2–5.
+  //   5. If completedBoundaryIdx > globalLastFiredBoundaryIdx, emit ONE
+  //      notification and record the index.
+  //   6. Schedule a timeout for the next future boundary.
+  //   7. When the timeout fires, re-run steps 2–6.
   //
   // Deduplication uses module-level variables (not useRef) because the
   // Dashboard component unmounts when the user navigates to /activities.
-  // A useRef is destroyed on unmount, which would reset the counter and
-  // trigger duplicate catch-up notifications on remount. Module-level
-  // variables survive for the lifetime of the JavaScript module (the page).
+  // A useRef is destroyed on unmount, resetting the counter on remount and
+  // causing duplicate catch-up notifications. Module-level variables survive
+  // for the lifetime of the JavaScript module (the page).
   //
-  // globalLastFiredBoundaryIdx initialises to 0, which means boundary 0
-  // (0 hours elapsed) is treated as already-fired, so no notification
-  // fires immediately when tracking starts.
+  // globalLastFiredBoundaryIdx initialises to 0 — boundary 0 (0 hours elapsed)
+  // is pre-marked as fired so no notification fires at tracking start.
   //
-  // A per-effect `cancelled` flag guards against the rare race where a
-  // setTimeout callback enters the event queue just before cleanup runs its
-  // clearTimeout — the callback cannot fire a notification after cleanup.
+  // A per-effect `cancelled` flag guards against the race where a setTimeout
+  // callback is already queued when cleanup runs clearTimeout.
 
   useEffect(() => {
     if (!trackingStartedAt) {
@@ -352,9 +340,11 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
       return;
     }
 
+    // Bail immediately if the user has disabled tracking reminders.
+    if (!getNotificationPrefs().trackingRemindersEnabled) return;
+
     // Reset deduplication state only when a genuinely new tracking session
-    // starts (trackingStartedAt is a different string than last time).
-    // This is intentionally NOT reset on every effect invocation so that
+    // starts. Intentionally NOT reset on every effect invocation so that
     // React StrictMode's setup→cleanup→setup double-invoke cannot reset
     // the counter between the two setup phases.
     if (globalNotifiedSessionStart !== trackingStartedAt) {
@@ -364,25 +354,19 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
 
     const startMs = new Date(trackingStartedAt).getTime();
 
-    // This flag is set to true by the cleanup function. Any timeout callback
-    // that reads `cancelled === true` must not fire a notification — it means
-    // the effect has been cleaned up (tracking reset, unmount, or StrictMode
-    // teardown) and this scheduler instance is no longer authoritative.
+    // Set to true by cleanup — stale timeout callbacks check this before
+    // firing a notification so they discard themselves after teardown.
     let cancelled = false;
 
     function scheduleNextReminder() {
-      if (cancelled) return; // stale callback — discard
+      if (cancelled) return;
+      if (!getNotificationPrefs().trackingRemindersEnabled) return;
 
       const elapsed = Date.now() - startMs;
-      if (elapsed < 0) return; // clock skew guard
+      if (elapsed < 0) return;
 
       const completedBoundaryIdx = Math.floor(elapsed / TWO_HOURS_MS);
 
-      // Only notify if this boundary index is higher than any previously
-      // notified index for this session. This check is the last line of
-      // defence against duplicates: even if two scheduler instances somehow
-      // reach this point concurrently, the first one to increment the global
-      // will prevent the second from passing the condition.
       if (completedBoundaryIdx > globalLastFiredBoundaryIdx) {
         globalLastFiredBoundaryIdx = completedBoundaryIdx; // record BEFORE notifying
         showNotification(
@@ -391,15 +375,25 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
         );
       }
 
-      // Schedule a timeout for the NEXT future boundary.
       const delay = (completedBoundaryIdx + 1) * TWO_HOURS_MS - elapsed;
       reminderTimeoutRef.current = window.setTimeout(scheduleNextReminder, delay);
     }
 
+    // Also subscribe to preference changes: if the user disables tracking
+    // reminders from Settings while a timeout is already pending, cancel it
+    // immediately without waiting for the timeout to fire.
+    const unsubscribe = subscribeToPrefs((prefs) => {
+      if (!prefs.trackingRemindersEnabled && reminderTimeoutRef.current !== null) {
+        window.clearTimeout(reminderTimeoutRef.current);
+        reminderTimeoutRef.current = null;
+      }
+    });
+
     scheduleNextReminder();
 
     return () => {
-      cancelled = true; // stop any queued callback from this effect instance
+      cancelled = true;
+      unsubscribe();
       if (reminderTimeoutRef.current !== null) {
         window.clearTimeout(reminderTimeoutRef.current);
         reminderTimeoutRef.current = null;
@@ -407,12 +401,6 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
     };
   }, [trackingStartedAt]); // Re-runs only when the session timestamp changes
 
-  // ── Enable notifications handler ──────────────────────────────────────────
-
-  const handleEnableNotifications = useCallback(async () => {
-    const result = await requestNotificationPermission();
-    setNotifPermission(result === "unsupported" ? "unsupported" : result);
-  }, []);
   // ── Start tracking ────────────────────────────────────────────────────────
 
 
@@ -590,16 +578,6 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
               </div>
             </div>
             <div className="flex items-center gap-3">
-              {/* Enable notifications — only shown when permission not yet decided */}
-              {notifPermission === "default" && (
-                <button
-                  onClick={handleEnableNotifications}
-                  className="text-xs font-medium text-zinc-400 hover:text-zinc-200 underline underline-offset-2"
-                  title="Get reminded every 2 hours to log your time"
-                >
-                  Enable notifications
-                </button>
-              )}
               <button
                 onClick={refreshTasks}
                 disabled={tasksLoading || !user?.selectedTaskListId}
