@@ -82,6 +82,14 @@ const MIN_SEGMENT_PCT = 2;
 /** 2 hours in milliseconds — used for tracking reminder boundaries */
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
+// ─── Module-level state for Notification Deduplication ────────────────────────
+// Because Dashboard unmounts during navigation, local refs would be destroyed
+// and cause duplicate catch-up notifications upon remounting. These variables
+// guarantee deduplication survives navigation. Initializing the counter to 0
+// correctly prevents firing a notification immediately at 0-hours elapsed.
+let globalNotifiedSessionStart: string | null = null;
+let globalLastFiredBoundaryIdx: number = 0;
+
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
 function formatTime(date: Date) {
@@ -226,19 +234,8 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
     return Notification.permission;
   });
 
-  // Ref for the 2-hour reminder timeout — cleaned up on tracking change/unmount
+  // Ref for the 2-hour reminder timeout — cleared on cleanup
   const reminderTimeoutRef = useRef<number | null>(null);
-
-  // Which boundary index has already produced a notification for the CURRENT
-  // tracking session. Lives in a ref so it survives Dashboard rerenders and
-  // React StrictMode's deliberate setup→cleanup→setup double-invocation
-  // without resetting to -1. Only reset when trackingStartedAt changes to a
-  // genuinely new value (new session).
-  const lastFiredBoundaryIdxRef = useRef<number>(-1);
-
-  // The value of trackingStartedAt that lastFiredBoundaryIdxRef was last reset
-  // for. Used to detect a real session change vs. a mere re-render.
-  const lastResetForSessionRef = useRef<string | null>(null);
 
   // Derived
   const hasTrackingStarted = trackingStartedAt !== null;
@@ -317,23 +314,33 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
 
   // ── 2-hour tracking reminder ───────────────────────────────────────────────
   //
-  // Algorithm (no fixed setInterval — everything is derived from timestamps):
+  // Algorithm (no setInterval — derived entirely from timestamps):
   //
   //   1. When trackingStartedAt changes (new session / reset), cancel any
   //      pending timeout and restart the scheduler.
-  //   2. Compute elapsed = now - startedAt.
-  //   3. Find the index of the LAST boundary that should have fired:
-  //        lastBoundaryIdx = floor(elapsed / TWO_HOURS_MS)
-  //   4. If lastBoundaryIdx > lastFiredBoundaryIdxRef.current (boundary not yet
-  //      notified this session), emit exactly ONE notification and record it.
-  //   5. Schedule a timeout for the NEXT boundary:
-  //        delay = (lastBoundaryIdx + 1) * TWO_HOURS_MS - elapsed
-  //   6. When the timeout fires, re-run steps 2-5.
+  //   2. Compute elapsed = Date.now() - startedAt.
+  //   3. Find the index of the last boundary that should have fired:
+  //        completedBoundaryIdx = floor(elapsed / TWO_HOURS_MS)
+  //        (0 = haven't reached 2h yet, 1 = 2h reached, 2 = 4h reached, …)
+  //   4. If completedBoundaryIdx > globalLastFiredBoundaryIdx, the boundary
+  //      has not been notified yet — emit ONE notification and record the index.
+  //   5. Schedule a timeout for the next future boundary:
+  //        delay = (completedBoundaryIdx + 1) * TWO_HOURS_MS - elapsed
+  //   6. When the timeout fires, re-run steps 2–5.
   //
-  // Deduplication survives rerenders because lastFiredBoundaryIdxRef is a ref
-  // (not a local variable). It is only reset when trackingStartedAt is a new
-  // value, detected via lastResetForSessionRef — so React StrictMode's
-  // deliberate setup→cleanup→setup cycle does NOT wipe the counter.
+  // Deduplication uses module-level variables (not useRef) because the
+  // Dashboard component unmounts when the user navigates to /activities.
+  // A useRef is destroyed on unmount, which would reset the counter and
+  // trigger duplicate catch-up notifications on remount. Module-level
+  // variables survive for the lifetime of the JavaScript module (the page).
+  //
+  // globalLastFiredBoundaryIdx initialises to 0, which means boundary 0
+  // (0 hours elapsed) is treated as already-fired, so no notification
+  // fires immediately when tracking starts.
+  //
+  // A per-effect `cancelled` flag guards against the rare race where a
+  // setTimeout callback enters the event queue just before cleanup runs its
+  // clearTimeout — the callback cannot fire a notification after cleanup.
 
   useEffect(() => {
     if (!trackingStartedAt) {
@@ -345,55 +352,60 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
       return;
     }
 
-    // Reset deduplication counter ONLY when this is a genuinely new session,
-    // not merely a re-execution of the effect for the same trackingStartedAt
-    // value (e.g. StrictMode double-invoke, or future React re-runs).
-    if (lastResetForSessionRef.current !== trackingStartedAt) {
-      lastFiredBoundaryIdxRef.current = -1;
-      lastResetForSessionRef.current = trackingStartedAt;
+    // Reset deduplication state only when a genuinely new tracking session
+    // starts (trackingStartedAt is a different string than last time).
+    // This is intentionally NOT reset on every effect invocation so that
+    // React StrictMode's setup→cleanup→setup double-invoke cannot reset
+    // the counter between the two setup phases.
+    if (globalNotifiedSessionStart !== trackingStartedAt) {
+      globalLastFiredBoundaryIdx = 0; // 0 = treat start as already-notified
+      globalNotifiedSessionStart = trackingStartedAt;
     }
 
     const startMs = new Date(trackingStartedAt).getTime();
 
+    // This flag is set to true by the cleanup function. Any timeout callback
+    // that reads `cancelled === true` must not fire a notification — it means
+    // the effect has been cleaned up (tracking reset, unmount, or StrictMode
+    // teardown) and this scheduler instance is no longer authoritative.
+    let cancelled = false;
+
     function scheduleNextReminder() {
+      if (cancelled) return; // stale callback — discard
+
       const elapsed = Date.now() - startMs;
       if (elapsed < 0) return; // clock skew guard
 
-      const lastBoundaryIdx = Math.floor(elapsed / TWO_HOURS_MS);
+      const completedBoundaryIdx = Math.floor(elapsed / TWO_HOURS_MS);
 
-      // Only notify if this boundary hasn't already been notified this session.
-      // lastFiredBoundaryIdxRef.current persists across effect re-executions,
-      // so a second scheduler spawned by StrictMode or a rerender cannot
-      // fire for a boundary that the first scheduler already handled.
-      if (lastBoundaryIdx > lastFiredBoundaryIdxRef.current) {
+      // Only notify if this boundary index is higher than any previously
+      // notified index for this session. This check is the last line of
+      // defence against duplicates: even if two scheduler instances somehow
+      // reach this point concurrently, the first one to increment the global
+      // will prevent the second from passing the condition.
+      if (completedBoundaryIdx > globalLastFiredBoundaryIdx) {
+        globalLastFiredBoundaryIdx = completedBoundaryIdx; // record BEFORE notifying
         showNotification(
           "How was the last 2 hours spent?",
           "Take a moment to log your time."
         );
-        lastFiredBoundaryIdxRef.current = lastBoundaryIdx;
       }
 
       // Schedule a timeout for the NEXT future boundary.
-      const nextBoundaryMs = (lastBoundaryIdx + 1) * TWO_HOURS_MS;
-      const delay = nextBoundaryMs - elapsed;
-
-      reminderTimeoutRef.current = window.setTimeout(() => {
-        scheduleNextReminder();
-      }, delay);
+      const delay = (completedBoundaryIdx + 1) * TWO_HOURS_MS - elapsed;
+      reminderTimeoutRef.current = window.setTimeout(scheduleNextReminder, delay);
     }
 
     scheduleNextReminder();
 
     return () => {
-      // Cancel the pending timeout on cleanup (tracking reset, new session,
-      // or unmount). The deduplication ref is NOT reset here — that only
-      // happens above when trackingStartedAt itself changes to a new value.
+      cancelled = true; // stop any queued callback from this effect instance
       if (reminderTimeoutRef.current !== null) {
         window.clearTimeout(reminderTimeoutRef.current);
         reminderTimeoutRef.current = null;
       }
     };
-  }, [trackingStartedAt]); // Re-run only when the tracking session changes
+  }, [trackingStartedAt]); // Re-runs only when the session timestamp changes
 
   // ── Enable notifications handler ──────────────────────────────────────────
 
