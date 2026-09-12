@@ -92,3 +92,4 @@ console.log("Running timeCalculations verification tests...\n");
 }
 
 console.log("\nAll timeCalculations tests passed successfully!");
+
