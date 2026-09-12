@@ -572,6 +572,190 @@ app.get("/time-blocks", requireAuth, async (request, response) => {
   }
 });
 
+// ─── GET /time-summary ────────────────────────────────────────────────────────
+//
+// Computes daily time summary for the authenticated user within [startDate, endDate).
+// Reuses calculateEffectiveBlock and calculateAllocationDurations so cross-midnight
+// blocks are split accurately and integer remainder is handled canonically.
+// Accounts for the user's currently active tracking session if running.
+
+app.get("/time-summary", requireAuth, async (request, response) => {
+  const userId = response.locals.userId;
+
+  const rawStart = (request.query.startDate ?? request.query.start) as string | undefined;
+  const rawEnd = (request.query.endDate ?? request.query.end) as string | undefined;
+
+  let windowStart: Date;
+  let windowEnd: Date;
+
+  if (rawStart && rawEnd) {
+    windowStart = new Date(rawStart);
+    windowEnd = new Date(rawEnd);
+  } else {
+    // Default to today's local UTC representation
+    const now = new Date();
+    windowStart = new Date(now);
+    windowStart.setHours(0, 0, 0, 0);
+    windowEnd = new Date(windowStart);
+    windowEnd.setDate(windowEnd.getDate() + 1);
+  }
+
+  if (isNaN(windowStart.getTime()) || isNaN(windowEnd.getTime()) || windowStart >= windowEnd) {
+    response.status(400).json({ error: "Invalid startDate or endDate query parameters." });
+    return;
+  }
+
+  try {
+    // 1. Fetch finalized time blocks overlapping the window
+    const rows = await db
+      .select({
+        blockId: timeBlocks.id,
+        blockStartTime: timeBlocks.startTime,
+        blockEndTime: timeBlocks.endTime,
+        allocPct: activity_allocations.percentage,
+        actId: activities.id,
+        actName: activities.name,
+        actColor: activities.color,
+      })
+      .from(timeBlocks)
+      .where(
+        and(
+          eq(timeBlocks.userId, userId),
+          lt(timeBlocks.startTime, windowEnd),
+          gt(timeBlocks.endTime, windowStart)
+        )
+      )
+      .innerJoin(
+        activity_allocations,
+        eq(activity_allocations.timeBlockId, timeBlocks.id)
+      )
+      .innerJoin(
+        activities,
+        eq(activities.id, activity_allocations.activityId)
+      );
+
+    // Group allocations by block
+    type BlockSummary = {
+      blockStartTime: Date;
+      blockEndTime: Date;
+      allocations: Array<{
+        activityId: number;
+        percentage: number;
+        name: string;
+        color: string;
+      }>;
+    };
+
+    const blocksMap = new Map<number, BlockSummary>();
+
+    for (const row of rows) {
+      if (!blocksMap.has(row.blockId)) {
+        blocksMap.set(row.blockId, {
+          blockStartTime: row.blockStartTime,
+          blockEndTime: row.blockEndTime,
+          allocations: [],
+        });
+      }
+      blocksMap.get(row.blockId)!.allocations.push({
+        activityId: row.actId,
+        percentage: row.allocPct,
+        name: row.actName,
+        color: row.actColor,
+      });
+    }
+
+    // 2. Aggregate activity durations across blocks
+    const activityTotals = new Map<
+      number,
+      { id: number; name: string; color: string; totalSeconds: number }
+    >();
+    let finalizedSeconds = 0;
+
+    for (const block of blocksMap.values()) {
+      const { elapsedSeconds } = calculateEffectiveBlock(
+        block.blockStartTime,
+        block.blockEndTime,
+        windowStart,
+        windowEnd
+      );
+
+      finalizedSeconds += elapsedSeconds;
+
+      const distributed = calculateAllocationDurations(
+        elapsedSeconds,
+        block.allocations.map((a) => ({ activityId: a.activityId, percentage: a.percentage }))
+      );
+
+      const durationMap = new Map(distributed.map((d) => [d.activityId, d.durationSeconds]));
+
+      for (const alloc of block.allocations) {
+        const duration = durationMap.get(alloc.activityId) ?? 0;
+        if (!activityTotals.has(alloc.activityId)) {
+          activityTotals.set(alloc.activityId, {
+            id: alloc.activityId,
+            name: alloc.name,
+            color: alloc.color,
+            totalSeconds: 0,
+          });
+        }
+        activityTotals.get(alloc.activityId)!.totalSeconds += duration;
+      }
+    }
+
+    // 3. Inspect actively running/current tracking block for user
+    const [user] = await db
+      .select({ trackingStartedAt: users.trackingStartedAt })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    let activeTrackingSeconds = 0;
+    let hasActiveTracking = false;
+    let activeTrackingStartedAt: string | null = null;
+
+    if (user?.trackingStartedAt) {
+      hasActiveTracking = true;
+      activeTrackingStartedAt = user.trackingStartedAt.toISOString();
+      const now = new Date();
+      const { elapsedSeconds: activeSeconds } = calculateEffectiveBlock(
+        user.trackingStartedAt,
+        now,
+        windowStart,
+        windowEnd
+      );
+      activeTrackingSeconds = activeSeconds;
+    }
+
+    const totalTrackedSeconds = finalizedSeconds + activeTrackingSeconds;
+
+    // Format activity list sorted by total duration descending
+    const sortedActivities = Array.from(activityTotals.values())
+      .filter((a) => a.totalSeconds > 0)
+      .sort((a, b) => b.totalSeconds - a.totalSeconds)
+      .map((a) => ({
+        ...a,
+        percentage:
+          totalTrackedSeconds > 0
+            ? Math.round((a.totalSeconds / totalTrackedSeconds) * 100)
+            : 0,
+      }));
+
+    response.json({
+      startDate: windowStart.toISOString(),
+      endDate: windowEnd.toISOString(),
+      totalTrackedSeconds,
+      finalizedSeconds,
+      activeTrackingSeconds,
+      hasActiveTracking,
+      activeTrackingStartedAt,
+      activities: sortedActivities,
+    });
+  } catch (err) {
+    console.error("Failed to generate time summary:", err);
+    response.status(500).json({ error: "Could not generate time summary." });
+  }
+});
+
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 app.listen(port, () => {
