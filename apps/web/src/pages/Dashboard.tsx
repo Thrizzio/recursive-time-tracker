@@ -373,6 +373,21 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
     return () => window.clearInterval(id);
   }, []);
 
+  // ── Midnight rollover ──────────────────────────────────────────────────────
+  // When local calendar date rolls over at midnight (or tab wakes up from sleep),
+  // automatically refresh today's summary, blocks, and calendar events.
+  const lastDateRef = useRef(now.toDateString());
+
+  useEffect(() => {
+    const currentDateString = now.toDateString();
+    if (lastDateRef.current !== currentDateString) {
+      lastDateRef.current = currentDateString;
+      fetchTodaySummary();
+      fetchTimeBlocks();
+      fetchTodayEvents();
+    }
+  }, [now]);
+
   // ── 2-hour tracking reminder ───────────────────────────────────────────────
   //
   // Algorithm (no setInterval — derived entirely from timestamps):
