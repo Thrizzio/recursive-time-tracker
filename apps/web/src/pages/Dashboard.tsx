@@ -253,7 +253,17 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
     setTimeBlocksLoading(true);
     setTimeBlocksError("");
     try {
-      const res = await customFetch(`${apiUrl}/time-blocks`);
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const startOfNextDay = new Date(startOfDay);
+      startOfNextDay.setDate(startOfNextDay.getDate() + 1);
+
+      const params = new URLSearchParams({
+        startDate: startOfDay.toISOString(),
+        endDate: startOfNextDay.toISOString(),
+      });
+
+      const res = await customFetch(`${apiUrl}/time-blocks?${params.toString()}`);
       if (!res.ok) throw new Error("Server error");
       const data = (await res.json()) as TimeBlockFull[];
       setTimeBlocks(data);

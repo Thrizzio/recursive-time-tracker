@@ -1,13 +1,14 @@
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import { asc, desc, eq, inArray, and } from "drizzle-orm";
+import { asc, desc, eq, inArray, and, lt, gt } from "drizzle-orm";
 import { db } from "./db/client.js";
 import { activities, activity_allocations, timeBlocks, users } from "./db/schema.js";
 import { getGoogleAuthUrl, getGoogleTokens, getGoogleUser } from "./auth/google.js";
 import { createSession, getSessionUserId, deleteSession } from "./auth/session.js";
 import { getIncompleteTasks, completeTasks, getTaskLists, getTasksFromList } from "./services/google/tasks.js";
 import { listEvents } from "./services/google/calendar.js";
+import { calculateEffectiveBlock, calculateAllocationDurations } from "./services/timeCalculations.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -347,32 +348,14 @@ app.post("/log-session", requireAuth, async (request, response) => {
 
   // Fallback to endTime if trackingStartedAt is null
   const startTime = currentUser?.trackingStartedAt ? currentUser.trackingStartedAt : endTime;
-  const elapsedSeconds = Math.round((endTime.getTime() - startTime.getTime()) / 1000);
+  const { elapsedSeconds } = calculateEffectiveBlock(startTime, endTime);
 
   // ── 3. Compute duration_seconds per allocation ────────────────────────────
   //
   // Computed in memory only — stored column is `percentage`.
   // Sum is guaranteed to equal elapsedSeconds by giving remainder to the
-  // largest allocation.
-
-  // Compute floor durations
-  const durations = typedAllocs.map((a) => ({
-    activityId: a.activityId,
-    percentage: a.percentage,
-    durationSeconds: Math.floor((a.percentage / 100) * elapsedSeconds),
-  }));
-
-  // Compute rounding remainder and assign it to the single largest allocation
-  const sumFloor = durations.reduce((s, d) => s + d.durationSeconds, 0);
-  const remainder = elapsedSeconds - sumFloor;
-  if (remainder > 0) {
-    // Find index of allocation with largest percentage (ties: first one wins)
-    let largestIdx = 0;
-    for (let i = 1; i < durations.length; i++) {
-      if (durations[i].percentage > durations[largestIdx].percentage) largestIdx = i;
-    }
-    durations[largestIdx].durationSeconds += remainder;
-  }
+  // largest allocation via calculateAllocationDurations.
+  const durations = calculateAllocationDurations(elapsedSeconds, typedAllocs);
 
   // ── 4. Persist inside a transaction ───────────────────────────────────────
 
@@ -466,7 +449,24 @@ app.get("/google/calendar", requireAuth, async (req, res) => {
 
 app.get("/time-blocks", requireAuth, async (request, response) => {
   const userId = response.locals.userId;
+  const rawStart = (request.query.startDate ?? request.query.start) as string | undefined;
+  const rawEnd = (request.query.endDate ?? request.query.end) as string | undefined;
+
+  const windowStart = rawStart ? new Date(rawStart) : undefined;
+  const windowEnd = rawEnd ? new Date(rawEnd) : undefined;
+  const hasWindow = Boolean(
+    windowStart && windowEnd && !isNaN(windowStart.getTime()) && !isNaN(windowEnd.getTime())
+  );
+
   try {
+    const whereCondition = hasWindow
+      ? and(
+          eq(timeBlocks.userId, userId),
+          lt(timeBlocks.startTime, windowEnd!),
+          gt(timeBlocks.endTime, windowStart!)
+        )
+      : eq(timeBlocks.userId, userId);
+
     // One query — left join so a block with no allocations still appears
     const rows = await db
       .select({
@@ -481,7 +481,7 @@ app.get("/time-blocks", requireAuth, async (request, response) => {
         actColor: activities.color,
       })
       .from(timeBlocks)
-      .where(eq(timeBlocks.userId, userId))
+      .where(whereCondition)
       .leftJoin(
         activity_allocations,
         eq(activity_allocations.timeBlockId, timeBlocks.id),
@@ -493,54 +493,79 @@ app.get("/time-blocks", requireAuth, async (request, response) => {
       .orderBy(desc(timeBlocks.startTime));
 
     // Group flat rows → hierarchical blocks
-    const blockMap = new Map<number, {
+    type TempBlock = {
       id: number;
       startTime: Date;
       endTime: Date;
       createdAt: Date;
       elapsedSeconds: number;
-      allocations: Array<{
+      rawAllocations: Array<{
         id: number;
         activityId: number;
         percentage: number;
-        durationSeconds: number;
         activity: { id: number; name: string; color: string };
       }>;
-    }>();
+    };
+
+    const blockMap = new Map<number, TempBlock>();
 
     for (const row of rows) {
       if (!blockMap.has(row.blockId)) {
-        const elapsed = Math.round(
-          (row.blockEndTime.getTime() - row.blockStartTime.getTime()) / 1000,
+        const { effectiveStart, effectiveEnd, elapsedSeconds } = calculateEffectiveBlock(
+          row.blockStartTime,
+          row.blockEndTime,
+          hasWindow ? windowStart : undefined,
+          hasWindow ? windowEnd : undefined,
         );
+
         blockMap.set(row.blockId, {
           id: row.blockId,
-          startTime: row.blockStartTime,
-          endTime: row.blockEndTime,
+          startTime: effectiveStart,
+          endTime: effectiveEnd,
           createdAt: row.blockCreatedAt,
-          elapsedSeconds: elapsed,
-          allocations: [],
+          elapsedSeconds,
+          rawAllocations: [],
         });
       }
 
       // A block might legitimately have no allocations (left join returns nulls)
       if (row.allocId !== null && row.actId !== null) {
         const block = blockMap.get(row.blockId)!;
-        const durationSeconds = Math.round(
-          ((row.allocPct ?? 0) / 100) * block.elapsedSeconds,
-        );
-        block.allocations.push({
+        block.rawAllocations.push({
           id: row.allocId,
           activityId: row.actId,
           percentage: row.allocPct ?? 0,
-          durationSeconds,
           activity: { id: row.actId, name: row.actName!, color: row.actColor! },
         });
       }
     }
 
+    // Distribute allocation durations using the shared helper
+    const result = Array.from(blockMap.values()).map((block) => {
+      const distributed = calculateAllocationDurations(
+        block.elapsedSeconds,
+        block.rawAllocations.map((a) => ({ activityId: a.activityId, percentage: a.percentage })),
+      );
+      const durationMap = new Map(distributed.map((d) => [d.activityId, d.durationSeconds]));
+
+      return {
+        id: block.id,
+        startTime: block.startTime,
+        endTime: block.endTime,
+        createdAt: block.createdAt,
+        elapsedSeconds: block.elapsedSeconds,
+        allocations: block.rawAllocations.map((a) => ({
+          id: a.id,
+          activityId: a.activityId,
+          percentage: a.percentage,
+          durationSeconds: durationMap.get(a.activityId) ?? 0,
+          activity: a.activity,
+        })),
+      };
+    });
+
     // Already in desc(startTime) order from the query; Map preserves insertion order
-    response.json([...blockMap.values()]);
+    response.json(result);
   } catch (err) {
     console.error("Failed to fetch time blocks:", err);
     response.status(500).json({ error: "Could not fetch time blocks." });
