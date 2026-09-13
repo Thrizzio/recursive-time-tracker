@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
+    "test": "tsx src/services/timeCalculations.test.ts",
     "start": "node dist/server.js",
     "db:reset": "tsx src/db/reset.ts",
     "db:push": "tsx src/db/push.ts",

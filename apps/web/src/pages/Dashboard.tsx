@@ -2,6 +2,7 @@ import {
   FormEvent,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -71,6 +72,25 @@ type TimeBlockFull = {
   createdAt: string;
   elapsedSeconds: number;
   allocations: BlockAllocation[];
+};
+
+type TodaySummaryActivity = {
+  id: number;
+  name: string;
+  color: string;
+  totalSeconds: number;
+  percentage: number;
+};
+
+type TodaySummaryData = {
+  startDate: string;
+  endDate: string;
+  totalTrackedSeconds: number;
+  finalizedSeconds: number;
+  activeTrackingSeconds: number;
+  hasActiveTracking: boolean;
+  activeTrackingStartedAt: string | null;
+  activities: TodaySummaryActivity[];
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -224,6 +244,11 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
   const [retroEventsLoading, setRetroEventsLoading] = useState(false);
   const [retroEventsError, setRetroEventsError] = useState("");
 
+  // Today's Summary
+  const [todaySummary, setTodaySummary] = useState<TodaySummaryData | null>(null);
+  const [todaySummaryLoading, setTodaySummaryLoading] = useState(true);
+  const [todaySummaryError, setTodaySummaryError] = useState("");
+
   // Ref for the 2-hour reminder timeout — cleared on cleanup
   const reminderTimeoutRef = useRef<number | null>(null);
 
@@ -232,6 +257,16 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
   const boundary = trackingStartedAt ? new Date(trackingStartedAt) : null;
   const timeSinceBoundary = boundary ? formatElapsedClock(boundary, now) : "00:00:00";
   const boundaryLabel = boundary ? `Started ${formatTime(boundary)}` : "Waiting to start";
+
+  // Active tracking seconds falling within today's calendar day
+  const activeTodaySeconds = useMemo(() => {
+    if (!trackingStartedAt) return 0;
+    const startMs = new Date(trackingStartedAt).getTime();
+    const todayStartMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const effectiveStartMs = Math.max(startMs, todayStartMs);
+    const nowMs = now.getTime();
+    return Math.max(0, Math.floor((nowMs - effectiveStartMs) / 1000));
+  }, [trackingStartedAt, now]);
 
   // ── Fetch helpers ─────────────────────────────────────────────────────────
 
@@ -253,7 +288,17 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
     setTimeBlocksLoading(true);
     setTimeBlocksError("");
     try {
-      const res = await customFetch(`${apiUrl}/time-blocks`);
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const startOfNextDay = new Date(startOfDay);
+      startOfNextDay.setDate(startOfNextDay.getDate() + 1);
+
+      const params = new URLSearchParams({
+        startDate: startOfDay.toISOString(),
+        endDate: startOfNextDay.toISOString(),
+      });
+
+      const res = await customFetch(`${apiUrl}/time-blocks?${params.toString()}`);
       if (!res.ok) throw new Error("Server error");
       const data = (await res.json()) as TimeBlockFull[];
       setTimeBlocks(data);
@@ -289,18 +334,59 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
     }
   }
 
+  async function fetchTodaySummary() {
+    setTodaySummaryLoading(true);
+    setTodaySummaryError("");
+    try {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const startOfNextDay = new Date(startOfDay);
+      startOfNextDay.setDate(startOfNextDay.getDate() + 1);
+
+      const params = new URLSearchParams({
+        startDate: startOfDay.toISOString(),
+        endDate: startOfNextDay.toISOString(),
+      });
+
+      const res = await customFetch(`${apiUrl}/time-summary?${params.toString()}`);
+      if (!res.ok) throw new Error("Server error");
+      const data = (await res.json()) as TodaySummaryData;
+      setTodaySummary(data);
+    } catch {
+      setTodaySummaryError("Could not load today's summary.");
+    } finally {
+      setTodaySummaryLoading(false);
+    }
+  }
+
   // ── Effects ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
     fetchActivities().catch(() => setError("Could not load activities."));
     fetchTimeBlocks();
     fetchTodayEvents();
+    fetchTodaySummary();
   }, []);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  // ── Midnight rollover ──────────────────────────────────────────────────────
+  // When local calendar date rolls over at midnight (or tab wakes up from sleep),
+  // automatically refresh today's summary, blocks, and calendar events.
+  const lastDateRef = useRef(now.toDateString());
+
+  useEffect(() => {
+    const currentDateString = now.toDateString();
+    if (lastDateRef.current !== currentDateString) {
+      lastDateRef.current = currentDateString;
+      fetchTodaySummary();
+      fetchTimeBlocks();
+      fetchTodayEvents();
+    }
+  }, [now]);
 
   // ── 2-hour tracking reminder ───────────────────────────────────────────────
   //
@@ -413,6 +499,7 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
         setNow(new Date(data.trackingStartedAt));
         setFeedback(`Tracking started at ${formatTime(new Date(data.trackingStartedAt))}.`);
         setError("");
+        fetchTodaySummary();
       }
     } catch {
       setError("Could not start tracking.");
@@ -425,6 +512,7 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
       if (res.ok) {
         await onUserUpdate(); // Refresh user state
         setFeedback("Tracking reset successfully.");
+        fetchTodaySummary();
       }
     } catch {
       setError("Could not reset tracking.");
@@ -530,6 +618,8 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
       await onUserUpdate();
       setNow(new Date(block.endTime));
       setTimeBlocks((prev) => [block, ...prev]);
+      fetchTodaySummary();
+      fetchTimeBlocks();
 
       closeModal();
       setFeedback(
@@ -607,8 +697,16 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
             </div>
           </header>
 
-          {/* ── Timer Panel (Mobile only) ──────────────────────────────────── */}
-          <div className="lg:hidden">
+          {/* ── Today's Summary & Timer Panel (Mobile only) ────────────────── */}
+          <div className="lg:hidden space-y-6">
+            <TodaySummary
+              summary={todaySummary}
+              loading={todaySummaryLoading}
+              error={todaySummaryError}
+              activeTodaySeconds={activeTodaySeconds}
+              hasTrackingStarted={hasTrackingStarted}
+              now={now}
+            />
             <TimerPanel />
           </div>
 
@@ -684,8 +782,16 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
 
         </section>
 
-        {/* Timer Panel (Desktop only) */}
-        <aside className="hidden lg:block w-80 flex-shrink-0">
+        {/* Right Sidebar: Today's Summary & Timer Panel (Desktop only) */}
+        <aside className="hidden lg:block w-80 flex-shrink-0 space-y-6">
+          <TodaySummary
+            summary={todaySummary}
+            loading={todaySummaryLoading}
+            error={todaySummaryError}
+            activeTodaySeconds={activeTodaySeconds}
+            hasTrackingStarted={hasTrackingStarted}
+            now={now}
+          />
           <TimerPanel />
         </aside>
       </div>
@@ -739,6 +845,159 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
         </div>
       ) : null}
     </main>
+  );
+}
+
+// ─── TodaySummary ─────────────────────────────────────────────────────────────
+
+type TodaySummaryProps = {
+  summary: TodaySummaryData | null;
+  loading: boolean;
+  error: string;
+  activeTodaySeconds: number;
+  hasTrackingStarted: boolean;
+  now: Date;
+};
+
+function TodaySummary({
+  summary,
+  loading,
+  error,
+  activeTodaySeconds,
+  hasTrackingStarted,
+  now,
+}: TodaySummaryProps) {
+  const formattedDate = now.toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  });
+
+  const finalizedSeconds = summary?.finalizedSeconds ?? 0;
+  const currentActiveSeconds = hasTrackingStarted
+    ? activeTodaySeconds
+    : (summary?.activeTrackingSeconds ?? 0);
+  const totalSeconds = finalizedSeconds + currentActiveSeconds;
+
+  return (
+    <section className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-4">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2 border-b border-zinc-800/80 pb-3.5">
+        <div className="space-y-0.5">
+          <h2 className="text-base font-semibold text-zinc-100">Today's Summary</h2>
+          <p className="text-xs text-zinc-400">{formattedDate}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+            Total tracked
+          </p>
+          <p className="text-lg font-bold text-cyan-400 tabular-nums">
+            {formatSeconds(totalSeconds)}
+          </p>
+        </div>
+      </div>
+
+      {loading && (
+        <div className="space-y-2.5 py-2">
+          <div className="h-4 bg-zinc-800/60 rounded animate-pulse w-3/4" />
+          <div className="h-4 bg-zinc-800/60 rounded animate-pulse w-1/2" />
+          <div className="h-4 bg-zinc-800/60 rounded animate-pulse w-2/3" />
+        </div>
+      )}
+
+      {error && !loading && (
+        <p className="text-xs text-red-400 bg-red-950/30 border border-red-900/50 rounded-lg p-2.5">
+          {error}
+        </p>
+      )}
+
+      {!loading && !error && totalSeconds === 0 && (
+        <div className="py-4 text-center text-zinc-500 space-y-1">
+          <p className="text-sm font-medium text-zinc-400">No time tracked today.</p>
+          <p className="text-xs text-zinc-500">
+            Press start tracking or log an activity to begin.
+          </p>
+        </div>
+      )}
+
+      {!loading && !error && totalSeconds > 0 && (
+        <div className="space-y-3">
+          {/* Activity items */}
+          <div className="space-y-2.5">
+            {summary?.activities.map((activity) => {
+              const pct = totalSeconds > 0
+                ? Math.round((activity.totalSeconds / totalSeconds) * 100)
+                : 0;
+
+              return (
+                <div key={activity.id} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className="h-2 w-2 flex-none rounded-full"
+                        style={{ backgroundColor: activity.color }}
+                      />
+                      <span className="truncate font-medium text-zinc-200">
+                        {activity.name}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 tabular-nums font-medium text-zinc-300">
+                      <span>{formatSeconds(activity.totalSeconds)}</span>
+                      <span className="text-[11px] text-zinc-500 w-7 text-right">
+                        {pct}%
+                      </span>
+                    </div>
+                  </div>
+                  {/* Proportion bar */}
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{
+                        width: `${Math.max(2, pct)}%`,
+                        backgroundColor: activity.color,
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Currently Active Tracking block (if running) */}
+            {hasTrackingStarted && currentActiveSeconds > 0 && (
+              <div className="space-y-1 pt-1 border-t border-zinc-800/60">
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500" />
+                    </span>
+                    <span className="truncate font-medium text-cyan-200">
+                      Active session
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 tabular-nums font-semibold text-cyan-300">
+                    <span>{formatSeconds(currentActiveSeconds)}</span>
+                    <span className="text-[11px] text-cyan-500/80 w-7 text-right">
+                      {totalSeconds > 0
+                        ? Math.round((currentActiveSeconds / totalSeconds) * 100)
+                        : 0}%
+                    </span>
+                  </div>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className="h-full rounded-full bg-cyan-400 transition-all duration-300"
+                    style={{
+                      width: `${Math.max(2, Math.round((currentActiveSeconds / totalSeconds) * 100))}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
