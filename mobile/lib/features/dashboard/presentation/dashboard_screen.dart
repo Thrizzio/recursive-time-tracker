@@ -1,0 +1,271 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../core/config/api_config.dart';
+import '../../../core/networking/api_client.dart';
+import '../../../shared/theme/chronolog_theme.dart';
+import '../../../shared/widgets/error_retry.dart';
+import '../../../shared/widgets/loading_card.dart';
+
+/// State of the backend health check.
+final healthCheckProvider = FutureProvider.autoDispose<bool>((ref) async {
+  final client = ref.watch(apiClientProvider);
+  return client.checkHealth();
+});
+
+/// Dashboard screen representing Chronolog's core time tracking workspace.
+class DashboardScreen extends ConsumerWidget {
+  const DashboardScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final healthState = ref.watch(healthCheckProvider);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: ChronologTheme.cyan950,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: ChronologTheme.cyan400.withValues(alpha: 0.3),
+                ),
+              ),
+              child: const Text(
+                'CHRONOLOG',
+                style: TextStyle(
+                  color: ChronologTheme.cyan400,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            const Text('Time Tracker'),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.category_outlined, size: 22),
+            tooltip: 'Activities',
+            onPressed: () => context.push('/activities'),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined, size: 22),
+            tooltip: 'Settings',
+            onPressed: () => context.push('/settings'),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: SafeArea(
+        child: RefreshIndicator(
+          color: ChronologTheme.cyan400,
+          backgroundColor: ChronologTheme.zinc900,
+          onRefresh: () async {
+            ref.invalidate(healthCheckProvider);
+          },
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              // Foundation & Connection Status Card
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'API Connection (Phase 2)',
+                            style: TextStyle(
+                              color: ChronologTheme.zinc50,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.refresh, size: 18),
+                            color: ChronologTheme.zinc400,
+                            tooltip: 'Ping /health',
+                            onPressed: () => ref.invalidate(healthCheckProvider),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Base URL: ${ApiConfig.baseUrl}',
+                        style: const TextStyle(
+                          color: ChronologTheme.zinc400,
+                          fontSize: 12,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      healthState.when(
+                        loading: () => const LoadingCard(
+                          message: 'Pinging backend /health...',
+                          height: 60,
+                        ),
+                        error: (err, _) => ErrorRetry(
+                          title: 'Connection check failed',
+                          message: err.toString(),
+                          onRetry: () => ref.invalidate(healthCheckProvider),
+                        ),
+                        data: (isHealthy) {
+                          if (isHealthy) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: ChronologTheme.emerald950.withValues(alpha: 0.4),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: ChronologTheme.emerald400.withValues(alpha: 0.4),
+                                ),
+                              ),
+                              child: const Row(
+                                children: [
+                                  Icon(
+                                    Icons.check_circle_outline,
+                                    color: ChronologTheme.emerald400,
+                                    size: 18,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Backend reachable: /health returned 200 OK',
+                                      style: TextStyle(
+                                        color: ChronologTheme.emerald400,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          } else {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: ChronologTheme.red950.withValues(alpha: 0.4),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: ChronologTheme.red400.withValues(alpha: 0.4),
+                                ),
+                              ),
+                              child: const Row(
+                                children: [
+                                  Icon(
+                                    Icons.cancel_outlined,
+                                    color: ChronologTheme.red400,
+                                    size: 18,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Backend offline or unreachable at this URL',
+                                      style: TextStyle(
+                                        color: ChronologTheme.red400,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Placeholder for Tracking section (Phase 4a)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Time Tracking (Phase 4a)',
+                        style: TextStyle(
+                          color: ChronologTheme.zinc50,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Will show live elapsed clock, start/reset tracking controls, and allocation logging in Phase 4a.',
+                        style: TextStyle(
+                          color: ChronologTheme.zinc400,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      ElevatedButton(
+                        onPressed: null,
+                        style: ElevatedButton.styleFrom(
+                          disabledBackgroundColor: ChronologTheme.zinc800,
+                          disabledForegroundColor: ChronologTheme.zinc500,
+                        ),
+                        child: const Text('Start tracking (Phase 4a)'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Placeholder for Today's Summary & Timeline
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Today\'s Summary & Timeline (Phase 4a)',
+                        style: TextStyle(
+                          color: ChronologTheme.zinc50,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Will render aggregated time totals, activity colors, and time blocks for today.',
+                        style: TextStyle(
+                          color: ChronologTheme.zinc400,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
