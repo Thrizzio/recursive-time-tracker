@@ -8,3 +8,4 @@ final calendarEventsProvider =
   final repo = ref.watch(calendarRepositoryProvider);
   return repo.getTodayEvents();
 });
+

@@ -12,6 +12,7 @@ import '../../calendar/presentation/calendar_controller.dart';
 import '../../calendar/presentation/widgets/calendar_agenda_card.dart';
 import '../../tasks/presentation/tasks_controller.dart';
 import '../../tasks/presentation/widgets/tasks_card.dart';
+import '../../timer/presentation/widgets/pomodoro_timer_card.dart';
 import '../../tracking/presentation/tracking_controller.dart';
 import '../../tracking/presentation/widgets/live_tracking_card.dart';
 import '../../tracking/presentation/widgets/today_summary_card.dart';
@@ -286,6 +287,11 @@ class DashboardScreen extends ConsumerWidget {
 
               // Live Tracking Control Panel (Phase 4a)
               const LiveTrackingCard(),
+
+              const SizedBox(height: 16),
+
+              // Pomodoro Focus Timer (Phase 5)
+              const PomodoroTimerCard(),
 
               const SizedBox(height: 16),
 

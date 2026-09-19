@@ -6,6 +6,7 @@ import '../../../../shared/widgets/error_retry.dart';
 import '../../../../shared/widgets/loading_card.dart';
 import '../../../auth/presentation/auth_controller.dart';
 import '../../../auth/presentation/auth_state.dart';
+import '../../../timer/presentation/timer_controller.dart';
 import '../tasks_controller.dart';
 
 /// Dashboard card displaying incomplete Google Tasks with completion action.
@@ -257,54 +258,108 @@ class TasksCard extends ConsumerWidget {
                                 ),
                                 const SizedBox(width: 10),
                                 Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        task.title,
-                                        style: const TextStyle(
-                                          color: ChronologTheme.zinc200,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(4),
+                                    onTap: () {
+                                      ref
+                                          .read(pomodoroTimerProvider.notifier)
+                                          .startFocusForTask(
+                                            taskId: task.id,
+                                            taskTitle: task.title,
+                                          );
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Started focus timer for "${task.title}"',
+                                          ),
+                                          backgroundColor:
+                                              ChronologTheme.cyan950,
+                                          behavior: SnackBarBehavior.floating,
                                         ),
-                                      ),
-                                      if (task.notes != null &&
-                                          task.notes!.isNotEmpty) ...[
-                                        const SizedBox(height: 4),
+                                      );
+                                    },
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
                                         Text(
-                                          task.notes!,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
+                                          task.title,
                                           style: const TextStyle(
-                                            color: ChronologTheme.zinc500,
-                                            fontSize: 12,
+                                            color: ChronologTheme.zinc200,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
                                           ),
                                         ),
-                                      ],
-                                      if (task.due != null) ...[
-                                        const SizedBox(height: 6),
-                                        Row(
-                                          children: [
-                                            const Icon(
-                                              Icons.event,
-                                              size: 12,
-                                              color: ChronologTheme.cyan400,
+                                        if (task.notes != null &&
+                                            task.notes!.isNotEmpty) ...[
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            task.notes!,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: ChronologTheme.zinc500,
+                                              fontSize: 12,
                                             ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              _formatDueDate(task.due!),
-                                              style: const TextStyle(
+                                          ),
+                                        ],
+                                        if (task.due != null) ...[
+                                          const SizedBox(height: 6),
+                                          Row(
+                                            children: [
+                                              const Icon(
+                                                Icons.event,
+                                                size: 12,
                                                 color: ChronologTheme.cyan400,
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w500,
                                               ),
-                                            ),
-                                          ],
-                                        ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                _formatDueDate(task.due!),
+                                                style: const TextStyle(
+                                                  color: ChronologTheme.cyan400,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
                                       ],
-                                    ],
+                                    ),
                                   ),
+                                ),
+                                const SizedBox(width: 6),
+                                IconButton(
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  icon: const Icon(
+                                    Icons.timer_outlined,
+                                    color: ChronologTheme.zinc500,
+                                    size: 18,
+                                  ),
+                                  tooltip: 'Start focus timer',
+                                  onPressed: () {
+                                    ref
+                                        .read(pomodoroTimerProvider.notifier)
+                                        .startFocusForTask(
+                                          taskId: task.id,
+                                          taskTitle: task.title,
+                                        );
+                                    ScaffoldMessenger.of(
+                                      context,
+                                    ).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Started focus timer for "${task.title}"',
+                                        ),
+                                        backgroundColor:
+                                            ChronologTheme.cyan950,
+                                        behavior: SnackBarBehavior.floating,
+                                      ),
+                                    );
+                                  },
                                 ),
                               ],
                             ),

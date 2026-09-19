@@ -44,3 +44,4 @@ class ActivitiesRepository {
     return ActivityModel.fromJson(data);
   }
 }
+

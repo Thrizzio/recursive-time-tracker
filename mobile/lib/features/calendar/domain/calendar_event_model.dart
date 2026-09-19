@@ -90,3 +90,4 @@ class CalendarEventModel {
   String toString() =>
       'CalendarEventModel(id: $id, title: $title, start: $start, end: $end, allDay: $allDay)';
 }
+
