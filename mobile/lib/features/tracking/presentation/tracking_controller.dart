@@ -85,6 +85,15 @@ class TrackingController extends Notifier<TrackingState> {
 
   TrackingRepository get _repo => ref.read(trackingRepositoryProvider);
 
+  /// Updates tracking started timestamp from sync/WebSocket events.
+  void setTrackingStartedAt(DateTime? startedAt) {
+    if (startedAt == null) {
+      state = state.copyWith(clearTrackingStartedAt: true);
+    } else {
+      state = state.copyWith(trackingStartedAt: startedAt);
+    }
+  }
+
   /// Starts or resumes tracking session.
   Future<void> startTracking() async {
     state = state.copyWith(isLoading: true, clearError: true);

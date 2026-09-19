@@ -23,12 +23,14 @@ class AuthNotifier extends Notifier<AuthState> {
   Future<void> checkSession() async {
     try {
       final user = await _repository.checkCurrentUser();
+      if (!ref.mounted) return;
       if (user != null) {
         state = Authenticated(user);
       } else {
         state = const Unauthenticated();
       }
     } catch (e) {
+      if (!ref.mounted) return;
       debugPrint('[AuthNotifier] Session verification error: $e');
       state = Unauthenticated(errorMessage: 'Unable to verify session: $e');
     }
@@ -39,8 +41,10 @@ class AuthNotifier extends Notifier<AuthState> {
     state = const AuthLoading(message: 'Signing in with Google...');
     try {
       final user = await _repository.signInWithGoogle();
+      if (!ref.mounted) return;
       state = Authenticated(user);
     } catch (e) {
+      if (!ref.mounted) return;
       debugPrint('[AuthNotifier] Sign-in failed: $e');
       state = Unauthenticated(errorMessage: e.toString());
     }
@@ -54,7 +58,9 @@ class AuthNotifier extends Notifier<AuthState> {
     } catch (e) {
       debugPrint('[AuthNotifier] Logout warning: $e');
     } finally {
-      state = const Unauthenticated();
+      if (ref.mounted) {
+        state = const Unauthenticated();
+      }
     }
   }
 
@@ -76,6 +82,7 @@ class AuthNotifier extends Notifier<AuthState> {
   Future<void> refreshUser() async {
     try {
       final user = await _repository.checkCurrentUser();
+      if (!ref.mounted) return;
       if (user != null) {
         state = Authenticated(user);
       }

@@ -10,6 +10,9 @@ import { getIncompleteTasks, completeTasks, getTaskLists, getTasksFromList } fro
 import { listEvents } from "./services/google/calendar.js";
 import { calculateEffectiveBlock, calculateAllocationDurations } from "./services/timeCalculations.js";
 
+import { createServer } from "node:http";
+import { setupWebSocketServer, broadcastToUser } from "./ws.js";
+
 const app = express();
 const port = Number(process.env.PORT) || 3000;
 
@@ -300,6 +303,7 @@ app.post("/tasks/complete", requireAuth, async (req, res) => {
 
   try {
     await completeTasks(userId, taskIds);
+    broadcastToUser(userId, "task.completed", { taskIds });
     res.json({ success: true });
   } catch (error) {
     console.error("Failed to complete tasks:", error);
@@ -318,6 +322,10 @@ app.post("/tracking/start", requireAuth, async (req, res) => {
     .set({ trackingStartedAt: now })
     .where(eq(users.id, userId));
 
+  broadcastToUser(userId, "tracking.started", {
+    trackingStartedAt: now.toISOString(),
+  });
+
   res.json({ trackingStartedAt: now });
 });
 
@@ -328,6 +336,10 @@ app.post("/tracking/reset", requireAuth, async (req, res) => {
     .update(users)
     .set({ trackingStartedAt: null })
     .where(eq(users.id, userId));
+
+  broadcastToUser(userId, "tracking.reset", {
+    trackingStartedAt: null,
+  });
 
   res.json({ success: true, trackingStartedAt: null });
 });
@@ -471,22 +483,29 @@ app.post("/log-session", requireAuth, async (request, response) => {
       durations.map((d) => [d.activityId, d.durationSeconds]),
     );
 
+    const createdBlock = {
+      id: result.block.id,
+      startTime: result.block.startTime,
+      endTime: result.block.endTime,
+      createdAt: result.block.createdAt,
+      elapsedSeconds,
+      allocations: result.insertedAllocations.map((alloc) => ({
+        id: alloc.id,
+        activityId: alloc.activityId,
+        percentage: alloc.percentage,
+        durationSeconds: durationMap[alloc.activityId] ?? 0,
+        activity: activityMap[alloc.activityId],
+      })),
+    };
+
+    broadcastToUser(userId, "time-block.created", {
+      block: createdBlock,
+      trackingStartedAt: endTime.toISOString(),
+    });
+
     response.status(201).json({
       success: true,
-      block: {
-        id: result.block.id,
-        startTime: result.block.startTime,
-        endTime: result.block.endTime,
-        createdAt: result.block.createdAt,
-        elapsedSeconds,
-        allocations: result.insertedAllocations.map((alloc) => ({
-          id: alloc.id,
-          activityId: alloc.activityId,
-          percentage: alloc.percentage,
-          durationSeconds: durationMap[alloc.activityId] ?? 0,
-          activity: activityMap[alloc.activityId],
-        })),
-      }
+      block: createdBlock,
     });
   } catch (err) {
     console.error("Failed to create time block:", err);
@@ -832,6 +851,9 @@ app.get("/time-summary", requireAuth, async (request, response) => {
 
 // ─── Server ───────────────────────────────────────────────────────────────────
 
-app.listen(port, () => {
+const server = createServer(app);
+setupWebSocketServer(server);
+
+server.listen(port, () => {
   console.log(`Chronolog API is running on http://localhost:${port}`);
 });

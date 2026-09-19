@@ -49,6 +49,7 @@ class UserModel {
     String? name,
     String? avatarUrl,
     DateTime? trackingStartedAt,
+    bool clearTrackingStartedAt = false,
     String? selectedTaskListId,
   }) {
     return UserModel(
@@ -56,7 +57,9 @@ class UserModel {
       email: email ?? this.email,
       name: name ?? this.name,
       avatarUrl: avatarUrl ?? this.avatarUrl,
-      trackingStartedAt: trackingStartedAt ?? this.trackingStartedAt,
+      trackingStartedAt: clearTrackingStartedAt
+          ? null
+          : (trackingStartedAt ?? this.trackingStartedAt),
       selectedTaskListId: selectedTaskListId ?? this.selectedTaskListId,
     );
   }
