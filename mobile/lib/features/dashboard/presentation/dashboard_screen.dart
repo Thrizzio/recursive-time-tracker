@@ -8,6 +8,10 @@ import '../../../shared/widgets/error_retry.dart';
 import '../../../shared/widgets/loading_card.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../auth/presentation/auth_state.dart';
+import '../../calendar/presentation/calendar_controller.dart';
+import '../../calendar/presentation/widgets/calendar_agenda_card.dart';
+import '../../tasks/presentation/tasks_controller.dart';
+import '../../tasks/presentation/widgets/tasks_card.dart';
 import '../../tracking/presentation/tracking_controller.dart';
 import '../../tracking/presentation/widgets/live_tracking_card.dart';
 import '../../tracking/presentation/widgets/today_summary_card.dart';
@@ -58,11 +62,6 @@ class DashboardScreen extends ConsumerWidget {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.category_outlined, size: 22),
-            tooltip: 'Activities',
-            onPressed: () => context.push('/activities'),
-          ),
-          IconButton(
             icon: const Icon(Icons.settings_outlined, size: 22),
             tooltip: 'Settings',
             onPressed: () => context.push('/settings'),
@@ -79,6 +78,8 @@ class DashboardScreen extends ConsumerWidget {
             ref.invalidate(todaySummaryProvider);
             ref.invalidate(todayTimeBlocksProvider);
             ref.invalidate(activitiesListProvider);
+            ref.invalidate(tasksProvider);
+            ref.invalidate(calendarEventsProvider);
             await ref.read(authNotifierProvider.notifier).checkSession();
           },
           child: ListView(
@@ -285,6 +286,16 @@ class DashboardScreen extends ConsumerWidget {
 
               // Live Tracking Control Panel (Phase 4a)
               const LiveTrackingCard(),
+
+              const SizedBox(height: 16),
+
+              // Google Tasks Card (Phase 4b)
+              const TasksCard(),
+
+              const SizedBox(height: 16),
+
+              // Today's Google Calendar Agenda (Phase 4b)
+              const CalendarAgendaCard(),
 
               const SizedBox(height: 16),
 

@@ -8,6 +8,8 @@ import '../features/auth/presentation/login_screen.dart';
 import '../features/dashboard/presentation/dashboard_screen.dart';
 import '../features/settings/presentation/settings_screen.dart';
 
+import 'shell_screen.dart';
+
 /// Bridges Riverpod [AuthNotifier] state updates to GoRouter's [refreshListenable].
 class RouterNotifier extends ChangeNotifier {
   RouterNotifier(this._ref) {
@@ -62,20 +64,35 @@ final routerProvider = Provider<GoRouter>((ref) {
         redirect: (context, state) => '/dashboard',
       ),
       GoRoute(
-        path: '/dashboard',
-        builder: (context, state) => const DashboardScreen(),
-      ),
-      GoRoute(
         path: '/login',
         builder: (context, state) => const LoginScreen(),
       ),
       GoRoute(
-        path: '/activities',
-        builder: (context, state) => const ActivitiesScreen(),
-      ),
-      GoRoute(
         path: '/settings',
         builder: (context, state) => const SettingsScreen(),
+      ),
+      StatefulShellRoute.indexedStack(
+        builder: (context, state, navigationShell) {
+          return ShellScreen(navigationShell: navigationShell);
+        },
+        branches: [
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/dashboard',
+                builder: (context, state) => const DashboardScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/activities',
+                builder: (context, state) => const ActivitiesScreen(),
+              ),
+            ],
+          ),
+        ],
       ),
     ],
   );
