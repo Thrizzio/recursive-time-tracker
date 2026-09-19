@@ -8,6 +8,10 @@ import '../../../shared/widgets/error_retry.dart';
 import '../../../shared/widgets/loading_card.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../auth/presentation/auth_state.dart';
+import '../../tracking/presentation/tracking_controller.dart';
+import '../../tracking/presentation/widgets/live_tracking_card.dart';
+import '../../tracking/presentation/widgets/today_summary_card.dart';
+import '../../tracking/presentation/widgets/today_timeline_card.dart';
 
 /// State of the backend health check.
 final healthCheckProvider = FutureProvider.autoDispose<bool>((ref) async {
@@ -72,6 +76,10 @@ class DashboardScreen extends ConsumerWidget {
           backgroundColor: ChronologTheme.zinc900,
           onRefresh: () async {
             ref.invalidate(healthCheckProvider);
+            ref.invalidate(todaySummaryProvider);
+            ref.invalidate(todayTimeBlocksProvider);
+            ref.invalidate(activitiesListProvider);
+            await ref.read(authNotifierProvider.notifier).checkSession();
           },
           child: ListView(
             padding: const EdgeInsets.all(16),
@@ -275,72 +283,18 @@ class DashboardScreen extends ConsumerWidget {
 
               const SizedBox(height: 16),
 
-              // Placeholder for Tracking section (Phase 4a)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Time Tracking (Phase 4a)',
-                        style: TextStyle(
-                          color: ChronologTheme.zinc50,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Will show live elapsed clock, start/reset tracking controls, and allocation logging in Phase 4a.',
-                        style: TextStyle(
-                          color: ChronologTheme.zinc400,
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      ElevatedButton(
-                        onPressed: null,
-                        style: ElevatedButton.styleFrom(
-                          disabledBackgroundColor: ChronologTheme.zinc800,
-                          disabledForegroundColor: ChronologTheme.zinc500,
-                        ),
-                        child: const Text('Start tracking (Phase 4a)'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              // Live Tracking Control Panel (Phase 4a)
+              const LiveTrackingCard(),
 
               const SizedBox(height: 16),
 
-              // Placeholder for Today's Summary & Timeline
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Today\'s Summary & Timeline (Phase 4a)',
-                        style: TextStyle(
-                          color: ChronologTheme.zinc50,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Will render aggregated time totals, activity colors, and time blocks for today.',
-                        style: TextStyle(
-                          color: ChronologTheme.zinc400,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              // Today's Summary (Phase 4a)
+              const TodaySummaryCard(),
+
+              const SizedBox(height: 16),
+
+              // Today's Timeline (Phase 4a)
+              const TodayTimelineCard(),
             ],
           ),
         ),

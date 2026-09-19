@@ -11,7 +11,7 @@ import '../features/settings/presentation/settings_screen.dart';
 /// Bridges Riverpod [AuthNotifier] state updates to GoRouter's [refreshListenable].
 class RouterNotifier extends ChangeNotifier {
   RouterNotifier(this._ref) {
-    _ref.listen<AuthState>(authNotifierProvider, (_, __) {
+    _ref.listen<AuthState>(authNotifierProvider, (previous, next) {
       notifyListeners();
     });
   }
