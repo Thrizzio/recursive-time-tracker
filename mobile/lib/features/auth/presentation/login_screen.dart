@@ -1,13 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/theme/chronolog_theme.dart';
+import 'auth_controller.dart';
+import 'auth_state.dart';
 
-/// Screen displayed when user is not authenticated.
-/// Full Google Sign-In integration is implemented in Phase 3.
-class LoginScreen extends StatelessWidget {
+/// Screen displayed when the user is not authenticated.
+/// Handles interactive Google Sign-In with backend token exchange.
+class LoginScreen extends ConsumerWidget {
   const LoginScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final authState = ref.watch(authNotifierProvider);
+    final isLoading = authState is AuthLoading;
+
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -49,24 +55,83 @@ class LoginScreen extends StatelessWidget {
                         ),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 32),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Google Sign-In will be active in Phase 3.',
-                          ),
+                  const SizedBox(height: 24),
+
+                  if (authState is Unauthenticated &&
+                      authState.errorMessage != null &&
+                      authState.errorMessage!.isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: ChronologTheme.red950.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: ChronologTheme.red400.withValues(alpha: 0.4),
                         ),
-                      );
-                    },
-                    icon: const Icon(Icons.account_circle, size: 20),
-                    label: const Text('Continue with Google'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: ChronologTheme.zinc50,
-                      foregroundColor: ChronologTheme.zinc950,
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.error_outline,
+                            color: ChronologTheme.red400,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              authState.errorMessage!,
+                              style: const TextStyle(
+                                color: ChronologTheme.red400,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 20),
+                  ],
+
+                  if (isLoading) ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Column(
+                        children: [
+                          const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: ChronologTheme.cyan400,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            authState.message ?? 'Signing in...',
+                            style: const TextStyle(
+                              color: ChronologTheme.zinc400,
+                              fontSize: 13,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else ...[
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        ref.read(authNotifierProvider.notifier).signInWithGoogle();
+                      },
+                      icon: const Icon(Icons.account_circle, size: 20),
+                      label: const Text('Continue with Google'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: ChronologTheme.zinc50,
+                        foregroundColor: ChronologTheme.zinc950,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -76,4 +141,3 @@ class LoginScreen extends StatelessWidget {
     );
   }
 }
-

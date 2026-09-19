@@ -6,6 +6,8 @@ import '../../../core/networking/api_client.dart';
 import '../../../shared/theme/chronolog_theme.dart';
 import '../../../shared/widgets/error_retry.dart';
 import '../../../shared/widgets/loading_card.dart';
+import '../../auth/presentation/auth_controller.dart';
+import '../../auth/presentation/auth_state.dart';
 
 /// State of the backend health check.
 final healthCheckProvider = FutureProvider.autoDispose<bool>((ref) async {
@@ -20,6 +22,8 @@ class DashboardScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final healthState = ref.watch(healthCheckProvider);
+    final authState = ref.watch(authNotifierProvider);
+    final user = authState is Authenticated ? authState.user : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -72,6 +76,81 @@ class DashboardScreen extends ConsumerWidget {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              // Active User Card (Phase 3)
+              if (user != null) ...[
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 20,
+                          backgroundColor: ChronologTheme.cyan950,
+                          backgroundImage: user.avatarUrl != null
+                              ? NetworkImage(user.avatarUrl!)
+                              : null,
+                          child: user.avatarUrl == null
+                              ? Text(
+                                  user.name.isNotEmpty
+                                      ? user.name[0].toUpperCase()
+                                      : 'U',
+                                  style: const TextStyle(
+                                    color: ChronologTheme.cyan400,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                )
+                              : null,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                user.name,
+                                style: const TextStyle(
+                                  color: ChronologTheme.zinc50,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              Text(
+                                user.email,
+                                style: const TextStyle(
+                                  color: ChronologTheme.zinc400,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: ChronologTheme.emerald950.withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: ChronologTheme.emerald400.withValues(alpha: 0.4),
+                            ),
+                          ),
+                          child: const Text(
+                            'Session Active',
+                            style: TextStyle(
+                              color: ChronologTheme.emerald400,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
               // Foundation & Connection Status Card
               Card(
                 child: Padding(
