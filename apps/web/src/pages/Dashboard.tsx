@@ -11,6 +11,7 @@ import { TimerPanel } from "../components/timer/TimerPanel";
 import { TaskPanel } from "../components/tasks/TaskPanel";
 import { Sidebar, MenuButton } from "../components/Sidebar";
 import { useTasks } from "../hooks/useTasks";
+import { useWebSocketSync } from "../hooks/useWebSocketSync";
 import * as tasksService from "../services/tasks";
 import type { GoogleTask } from "../types/tasks";
 import { showNotification } from "../utils/notifications";
@@ -372,6 +373,33 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
     const id = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  // ── Realtime cross-client sync via WebSocket ───────────────────────────────
+  useWebSocketSync({
+    enabled: !!user,
+    onTrackingStarted: () => {
+      onUserUpdate();
+      fetchTodaySummary();
+    },
+    onTrackingReset: () => {
+      onUserUpdate();
+      fetchTodaySummary();
+    },
+    onTimeBlockCreated: () => {
+      onUserUpdate();
+      fetchTimeBlocks();
+      fetchTodaySummary();
+    },
+    onTaskCompleted: () => {
+      refreshTasks();
+    },
+    onReconnect: () => {
+      onUserUpdate();
+      fetchTimeBlocks();
+      fetchTodaySummary();
+      refreshTasks();
+    },
+  });
 
   // ── Midnight rollover ──────────────────────────────────────────────────────
   // When local calendar date rolls over at midnight (or tab wakes up from sleep),
