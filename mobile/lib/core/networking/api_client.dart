@@ -25,6 +25,7 @@ class ApiClient {
     required this.cookieJar,
     String? baseUrl,
     Dio? customDio,
+    this.onUnauthorized,
   }) : dio = customDio ??
             Dio(
               BaseOptions(
@@ -39,6 +40,21 @@ class ApiClient {
               ),
             ) {
     dio.interceptors.add(CookieManager(cookieJar));
+
+    // Handle 401 Unauthorized globally (session expired)
+    dio.interceptors.add(
+      InterceptorsWrapper(
+        onError: (DioException e, handler) {
+          if (e.response?.statusCode == 401) {
+            final path = e.requestOptions.path;
+            if (!path.contains('/auth/me') && !path.contains('/auth/mobile/google')) {
+              onUnauthorized?.call();
+            }
+          }
+          return handler.next(e);
+        },
+      ),
+    );
 
     if (kDebugMode) {
       dio.interceptors.add(
@@ -66,6 +82,7 @@ class ApiClient {
 
   final Dio dio;
   final CookieJar cookieJar;
+  final void Function()? onUnauthorized;
 
   /// Helper factory to initialize [PersistCookieJar] with device document directory.
   static Future<CookieJar> createDefaultCookieJar() async {
