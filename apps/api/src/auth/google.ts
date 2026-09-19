@@ -40,15 +40,15 @@ export function getGoogleAuthUrl() {
     return `${rootUrl}?${qs.toString()}`;
 }
 
-export async function getGoogleTokens(code: string) {
+export async function getGoogleTokens(code: string, redirectUri?: string) {
     const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_CALLBACK_URL } = getGoogleConfig();
 
     const url = "https://oauth2.googleapis.com/token";
-    const values = {
+    const values: Record<string, string> = {
         code,
         client_id: GOOGLE_CLIENT_ID,
         client_secret: GOOGLE_CLIENT_SECRET,
-        redirect_uri: GOOGLE_CALLBACK_URL,//confirms this authorization code belongs to the same OAuth flow and callback URL.
+        redirect_uri: redirectUri !== undefined ? redirectUri : GOOGLE_CALLBACK_URL,
         grant_type: "authorization_code",
     };
 
@@ -70,7 +70,7 @@ export async function getGoogleTokens(code: string) {
         access_token: string;
         id_token: string;
         expires_in: number;
-        refresh_token: string;
+        refresh_token?: string;
         scope: string;
     }>;
 }
