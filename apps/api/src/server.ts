@@ -10,6 +10,9 @@ import { getIncompleteTasks, completeTasks, getTaskLists, getTasksFromList } fro
 import { listEvents } from "./services/google/calendar.js";
 import { calculateEffectiveBlock, calculateAllocationDurations } from "./services/timeCalculations.js";
 
+import { createServer } from "node:http";
+import { setupWebSocketServer, broadcastToUser } from "./ws.js";
+
 const app = express();
 const port = Number(process.env.PORT) || 3000;
 
@@ -101,6 +104,80 @@ app.get("/auth/google/callback", async (req, res) => {
   } catch (error) {
     console.error("Auth callback error:", error);
     res.status(500).send("Authentication failed");
+  }
+});
+
+app.post("/auth/mobile/google", async (req, res) => {
+  const { code, redirectUri } = req.body ?? {};
+  if (!code || typeof code !== "string") {
+    res.status(400).json({ error: "Missing or invalid authorization code" });
+    return;
+  }
+
+  try {
+    // For Android mobile serverAuthCode exchange, Google requires redirect_uri to be "" (empty string)
+    const targetRedirectUri = redirectUri !== undefined ? redirectUri : "";
+    const tokens = await getGoogleTokens(code, targetRedirectUri);
+
+    // Explicitly log whether a refresh_token was returned by Google
+    if (tokens.refresh_token) {
+      console.log(`[Auth/Mobile] Token exchange successful. refresh_token received: YES (length: ${tokens.refresh_token.length})`);
+    } else {
+      console.log("[Auth/Mobile] Token exchange successful. refresh_token received: NO (undefined/null)");
+    }
+
+    const googleUser = await getGoogleUser(tokens.id_token, tokens.access_token);
+    const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
+
+    let [user] = await db.select().from(users).where(eq(users.googleId, googleUser.id));
+    if (!user) {
+      [user] = await db.insert(users).values({
+        googleId: googleUser.id,
+        email: googleUser.email,
+        name: googleUser.name,
+        avatarUrl: googleUser.picture,
+        googleAccessToken: tokens.access_token,
+        googleRefreshToken: tokens.refresh_token ?? null,
+        googleTokenExpiresAt: expiresAt,
+      }).returning();
+      console.log(`[Auth/Mobile] Registered new user id=${user.id}, email=${user.email}, hasRefreshToken=${Boolean(user.googleRefreshToken)}`);
+    } else {
+      // Existing user: NEVER overwrite existing stored refresh token with null
+      [user] = await db.update(users).set({
+        name: googleUser.name,
+        avatarUrl: googleUser.picture,
+        googleAccessToken: tokens.access_token,
+        googleTokenExpiresAt: expiresAt,
+        ...(tokens.refresh_token ? { googleRefreshToken: tokens.refresh_token } : {}),
+      }).where(eq(users.id, user.id)).returning();
+      console.log(`[Auth/Mobile] Updated existing user id=${user.id}, email=${user.email}, hasRefreshToken=${Boolean(user.googleRefreshToken)}`);
+    }
+
+    const sessionId = await createSession(user.id);
+
+    res.cookie("chronolog_session", sessionId, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/",
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+    });
+
+    // Deliver user profile only; sessionId is sent exclusively via Set-Cookie header
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        avatarUrl: user.avatarUrl,
+        trackingStartedAt: user.trackingStartedAt,
+        selectedTaskListId: user.selectedTaskListId,
+      },
+    });
+  } catch (error) {
+    console.error("[Auth/Mobile] Authentication failed:", error);
+    res.status(500).json({ error: "Authentication failed" });
   }
 });
 
@@ -226,6 +303,7 @@ app.post("/tasks/complete", requireAuth, async (req, res) => {
 
   try {
     await completeTasks(userId, taskIds);
+    broadcastToUser(userId, "task.completed", { taskIds });
     res.json({ success: true });
   } catch (error) {
     console.error("Failed to complete tasks:", error);
@@ -244,6 +322,10 @@ app.post("/tracking/start", requireAuth, async (req, res) => {
     .set({ trackingStartedAt: now })
     .where(eq(users.id, userId));
 
+  broadcastToUser(userId, "tracking.started", {
+    trackingStartedAt: now.toISOString(),
+  });
+
   res.json({ trackingStartedAt: now });
 });
 
@@ -254,6 +336,10 @@ app.post("/tracking/reset", requireAuth, async (req, res) => {
     .update(users)
     .set({ trackingStartedAt: null })
     .where(eq(users.id, userId));
+
+  broadcastToUser(userId, "tracking.reset", {
+    trackingStartedAt: null,
+  });
 
   res.json({ success: true, trackingStartedAt: null });
 });
@@ -397,22 +483,29 @@ app.post("/log-session", requireAuth, async (request, response) => {
       durations.map((d) => [d.activityId, d.durationSeconds]),
     );
 
+    const createdBlock = {
+      id: result.block.id,
+      startTime: result.block.startTime,
+      endTime: result.block.endTime,
+      createdAt: result.block.createdAt,
+      elapsedSeconds,
+      allocations: result.insertedAllocations.map((alloc) => ({
+        id: alloc.id,
+        activityId: alloc.activityId,
+        percentage: alloc.percentage,
+        durationSeconds: durationMap[alloc.activityId] ?? 0,
+        activity: activityMap[alloc.activityId],
+      })),
+    };
+
+    broadcastToUser(userId, "time-block.created", {
+      block: createdBlock,
+      trackingStartedAt: endTime.toISOString(),
+    });
+
     response.status(201).json({
       success: true,
-      block: {
-        id: result.block.id,
-        startTime: result.block.startTime,
-        endTime: result.block.endTime,
-        createdAt: result.block.createdAt,
-        elapsedSeconds,
-        allocations: result.insertedAllocations.map((alloc) => ({
-          id: alloc.id,
-          activityId: alloc.activityId,
-          percentage: alloc.percentage,
-          durationSeconds: durationMap[alloc.activityId] ?? 0,
-          activity: activityMap[alloc.activityId],
-        })),
-      }
+      block: createdBlock,
     });
   } catch (err) {
     console.error("Failed to create time block:", err);
@@ -758,6 +851,9 @@ app.get("/time-summary", requireAuth, async (request, response) => {
 
 // ─── Server ───────────────────────────────────────────────────────────────────
 
-app.listen(port, () => {
+const server = createServer(app);
+setupWebSocketServer(server);
+
+server.listen(port, () => {
   console.log(`Chronolog API is running on http://localhost:${port}`);
 });
