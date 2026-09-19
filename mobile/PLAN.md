@@ -301,14 +301,14 @@ Backend WebSocket server + Flutter client + web listener.
 | 8 | **Separate commit:** Add WebSocket listener to React web app for cross-client sync |
 
 **Done means:**
-- [ ] WebSocket connects with authenticated session
-- [ ] WebSocket events are scoped strictly to the authenticated user (never broadcast across different users)
-- [ ] Flutter receives events when web app changes state (and vice versa)
-- [ ] Disconnection triggers automatic reconnect with backoff
-- [ ] After reconnect, REST data is refreshed before processing new events
-- [ ] App backgrounding + foregrounding reconnects cleanly
-- [ ] Web app receives events from Flutter changes (separate commit)
-- [ ] Verified: cookie from PersistCookieJar is sent in WebSocket handshake
+- [x] WebSocket connects with authenticated session
+- [x] WebSocket events are scoped strictly to the authenticated user (never broadcast across different users)
+- [x] Flutter receives events when web app changes state (and vice versa)
+- [x] Disconnection triggers automatic reconnect with backoff
+- [x] After reconnect, REST data is refreshed before processing new events
+- [x] App backgrounding + foregrounding reconnects cleanly
+- [x] Web app receives events from Flutter changes (separate commit)
+- [x] Verified: cookie from PersistCookieJar is sent in WebSocket handshake
 
 ---
 
