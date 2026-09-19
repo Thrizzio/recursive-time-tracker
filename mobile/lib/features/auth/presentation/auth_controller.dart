@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/auth_repository.dart';
+import '../domain/user_model.dart';
 import 'auth_state.dart';
 
 /// Riverpod notifier managing global authentication state.
@@ -62,6 +63,25 @@ class AuthNotifier extends Notifier<AuthState> {
     state = Unauthenticated(
       errorMessage: message ?? 'Session expired. Please log in again.',
     );
+  }
+
+  /// Updates authenticated user state locally (e.g. after setting task list preference).
+  void updateUser(UserModel updated) {
+    if (state is Authenticated) {
+      state = Authenticated(updated);
+    }
+  }
+
+  /// Refreshes user profile from backend without full auth reload screen.
+  Future<void> refreshUser() async {
+    try {
+      final user = await _repository.checkCurrentUser();
+      if (user != null) {
+        state = Authenticated(user);
+      }
+    } catch (e) {
+      debugPrint('[AuthNotifier] Refresh user error: $e');
+    }
   }
 }
 
