@@ -73,19 +73,23 @@ class TodaySummaryCard extends ConsumerWidget {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 4,
                       children: [
                         Text(
-                          TimeUtils.formatHumanShort(summary.totalTrackedSeconds),
+                          summary.totalTrackedSeconds < 60 &&
+                                  summary.totalTrackedSeconds > 0
+                              ? '< 1m'
+                              : TimeUtils.formatSummaryDuration(
+                                  summary.totalTrackedSeconds),
                           style: const TextStyle(
                             color: ChronologTheme.cyan400,
                             fontSize: 24,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
-                        const SizedBox(width: 8),
                         const Text(
                           'tracked today',
                           style: TextStyle(
@@ -94,16 +98,31 @@ class TodaySummaryCard extends ConsumerWidget {
                           ),
                         ),
                         if (summary.hasActiveTracking &&
-                            summary.activeTrackingSeconds > 0) ...[
-                          const SizedBox(width: 6),
-                          Text(
-                            '(+ ${TimeUtils.formatHumanShort(summary.activeTrackingSeconds)} active)',
-                            style: const TextStyle(
-                              color: ChronologTheme.emerald400,
-                              fontSize: 12,
+                            summary.activeTrackingSeconds > 0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: ChronologTheme.emerald950,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color: ChronologTheme.emerald400
+                                    .withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: Text(
+                              summary.activeTrackingSeconds < 60
+                                  ? '+ ${summary.activeTrackingSeconds}s active'
+                                  : '+ ${TimeUtils.formatSummaryDuration(summary.activeTrackingSeconds)} active',
+                              style: const TextStyle(
+                                color: ChronologTheme.emerald400,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
-                        ],
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -120,48 +139,53 @@ class TodaySummaryCard extends ConsumerWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Row(
-                                  children: [
-                                    Container(
-                                      width: 10,
-                                      height: 10,
-                                      decoration: BoxDecoration(
-                                        color: color,
-                                        shape: BoxShape.circle,
+                                Expanded(
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        width: 10,
+                                        height: 10,
+                                        decoration: BoxDecoration(
+                                          color: color,
+                                          shape: BoxShape.circle,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      item.name,
-                                      style: const TextStyle(
-                                        color: ChronologTheme.zinc200,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w500,
+                                      const SizedBox(width: 8),
+                                      Flexible(
+                                        child: Text(
+                                          item.name,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: ChronologTheme.zinc200,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                                Row(
-                                  children: [
-                                    Text(
-                                      TimeUtils.formatHumanShort(item.totalSeconds),
-                                      style: const TextStyle(
-                                        color: ChronologTheme.zinc400,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      '${item.percentage}%',
-                                      style: TextStyle(
-                                        color: color,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
+                                const SizedBox(width: 12),
+                                Text(
+                                  item.totalSeconds < 60 && item.totalSeconds > 0
+                                      ? '< 1m'
+                                      : TimeUtils.formatSummaryDuration(
+                                          item.totalSeconds),
+                                  style: const TextStyle(
+                                    color: ChronologTheme.zinc400,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '${item.percentage}%',
+                                  style: TextStyle(
+                                    color: color,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ],
                             ),
