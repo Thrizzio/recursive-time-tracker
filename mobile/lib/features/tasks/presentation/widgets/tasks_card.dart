@@ -134,7 +134,6 @@ class TasksCard extends ConsumerWidget {
               Consumer(
                 builder: (context, ref, child) {
                   final tasksAsync = ref.watch(tasksProvider);
-                  final completingIds = ref.watch(completingTaskIdsProvider);
 
                   return tasksAsync.when(
                     loading: () => const LoadingCard(
@@ -195,7 +194,6 @@ class TasksCard extends ConsumerWidget {
                         separatorBuilder: (_, _) => const SizedBox(height: 8),
                         itemBuilder: (context, index) {
                           final task = tasks[index];
-                          final isCompleting = completingIds.contains(task.id);
 
                           return Container(
                             padding: const EdgeInsets.all(12),
@@ -207,56 +205,6 @@ class TasksCard extends ConsumerWidget {
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // Checkbox / Completing spinner
-                                SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: isCompleting
-                                      ? const Center(
-                                          child: SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: ChronologTheme.cyan400,
-                                            ),
-                                          ),
-                                        )
-                                      : IconButton(
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
-                                          icon: const Icon(
-                                            Icons.radio_button_unchecked,
-                                            color: ChronologTheme.zinc500,
-                                            size: 20,
-                                          ),
-                                          tooltip: 'Mark complete',
-                                          onPressed: () async {
-                                            try {
-                                              await ref
-                                                  .read(
-                                                    tasksActionControllerProvider,
-                                                  )
-                                                  .completeTask(task.id);
-                                            } catch (e) {
-                                              if (context.mounted) {
-                                                ScaffoldMessenger.of(
-                                                  context,
-                                                ).showSnackBar(
-                                                  SnackBar(
-                                                    content: Text(
-                                                      'Failed to complete task: $e',
-                                                    ),
-                                                    backgroundColor:
-                                                        ChronologTheme.red950,
-                                                  ),
-                                                );
-                                              }
-                                            }
-                                          },
-                                        ),
-                                ),
-                                const SizedBox(width: 10),
                                 Expanded(
                                   child: InkWell(
                                     borderRadius: BorderRadius.circular(4),

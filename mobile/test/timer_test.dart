@@ -291,7 +291,7 @@ void main() {
       final notifier = container.read(pomodoroTimerProvider.notifier);
       notifier.start(customDuration: const Duration(minutes: 10));
 
-      final sub = container.listen(pomodoroRemainingDurationProvider, (_, __) {});
+      final sub = container.listen(pomodoroRemainingDurationProvider, (_, _) {});
       await Future<void>.delayed(Duration.zero);
 
       final initialRem = sub.read().value;
