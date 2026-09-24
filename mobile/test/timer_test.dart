@@ -7,6 +7,7 @@ import 'package:app/features/timer/domain/timer_state.dart';
 import 'package:app/features/timer/presentation/timer_controller.dart';
 import 'package:app/features/timer/presentation/widgets/pomodoro_timer_card.dart';
 import 'package:app/shared/theme/chronolog_theme.dart';
+import 'package:app/shared/utils/time_utils.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -257,6 +258,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('50:00'), findsOneWidget);
 
+      var fakeClock = DateTime(2026, 9, 24, 12, 0, 0);
+      TimeUtils.clock = () => fakeClock;
+      addTearDown(() => TimeUtils.clock = DateTime.now);
+
       // Tap Start Focus
       await tester.tap(find.text('Start Focus'));
       await tester.pump();
@@ -264,6 +269,36 @@ void main() {
       expect(find.text('Running'), findsOneWidget);
       expect(find.text('Pause'), findsOneWidget);
       expect(find.text('Reset'), findsOneWidget);
+
+      // Verify that advancing time updates the displayed countdown continuously
+      fakeClock = fakeClock.add(const Duration(seconds: 2));
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.text('49:58'), findsOneWidget);
+
+      fakeClock = fakeClock.add(const Duration(seconds: 3));
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.text('49:55'), findsOneWidget);
+    });
+
+    test('pomodoroRemainingDurationProvider updates countdown smoothly with time', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final container = ProviderContainer(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefs),
+        ],
+      );
+
+      final notifier = container.read(pomodoroTimerProvider.notifier);
+      notifier.start(customDuration: const Duration(minutes: 10));
+
+      final sub = container.listen(pomodoroRemainingDurationProvider, (_, __) {});
+      await Future<void>.delayed(Duration.zero);
+
+      final initialRem = sub.read().value;
+      expect(initialRem?.inMinutes, inInclusiveRange(9, 10));
+
+      sub.close();
+      container.dispose();
     });
   });
 }

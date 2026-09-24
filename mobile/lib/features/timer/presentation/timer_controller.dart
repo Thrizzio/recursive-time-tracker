@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../shared/utils/time_utils.dart';
 import '../data/timer_storage.dart';
 import '../domain/timer_state.dart';
 
@@ -25,7 +26,7 @@ class PomodoroNotifier extends Notifier<TimerState> {
     final loaded = _storage.loadState();
     if (loaded != null) {
       if (loaded.status == TimerStatus.running && loaded.endsAt != null) {
-        final now = DateTime.now();
+        final now = TimeUtils.now();
         if (now.isAfter(loaded.endsAt!)) {
           // Timer reached 0 while app was in background or closed
           final finished = loaded.copyWith(
@@ -54,7 +55,7 @@ class PomodoroNotifier extends Notifier<TimerState> {
         return;
       }
 
-      final now = DateTime.now();
+      final now = TimeUtils.now();
       if (now.isAfter(state.endsAt!)) {
         _stopTicker();
         state = state.copyWith(
@@ -62,9 +63,6 @@ class PomodoroNotifier extends Notifier<TimerState> {
           clearEndsAt: true,
         );
         _storage.saveState(state);
-      } else {
-        // Trigger reactive state emission to update countdown display
-        state = state.copyWith();
       }
     });
   }
@@ -81,7 +79,7 @@ class PomodoroNotifier extends Notifier<TimerState> {
     String? taskTitle,
   }) {
     final sessionDuration = customDuration ?? state.duration;
-    final endsAt = DateTime.now().add(sessionDuration);
+    final endsAt = TimeUtils.now().add(sessionDuration);
 
     state = state.copyWith(
       status: TimerStatus.running,
@@ -100,7 +98,7 @@ class PomodoroNotifier extends Notifier<TimerState> {
   void pause() {
     if (state.status != TimerStatus.running || state.endsAt == null) return;
 
-    final remaining = state.endsAt!.difference(DateTime.now());
+    final remaining = state.endsAt!.difference(TimeUtils.now());
     _stopTicker();
 
     state = state.copyWith(
@@ -117,7 +115,7 @@ class PomodoroNotifier extends Notifier<TimerState> {
     if (state.status != TimerStatus.paused) return;
 
     final remaining = state.pausedRemaining ?? state.duration;
-    final endsAt = DateTime.now().add(remaining);
+    final endsAt = TimeUtils.now().add(remaining);
 
     state = state.copyWith(
       status: TimerStatus.running,
@@ -168,3 +166,22 @@ class PomodoroNotifier extends Notifier<TimerState> {
     start(taskId: taskId, taskTitle: taskTitle);
   }
 }
+
+/// 1-second reactive stream provider for live countdown ticking.
+/// Derives remaining time directly from state.endsAt when running or pausedRemaining.
+final pomodoroRemainingDurationProvider =
+    StreamProvider.autoDispose<Duration>((ref) async* {
+  final timer = ref.watch(pomodoroTimerProvider);
+
+  if (timer.status == TimerStatus.running && timer.endsAt != null) {
+    final initialDiff = timer.endsAt!.difference(TimeUtils.now());
+    yield initialDiff.isNegative ? Duration.zero : initialDiff;
+
+    yield* Stream.periodic(const Duration(seconds: 1), (_) {
+      final diff = timer.endsAt!.difference(TimeUtils.now());
+      return diff.isNegative ? Duration.zero : diff;
+    });
+  } else {
+    yield timer.remainingDuration;
+  }
+});

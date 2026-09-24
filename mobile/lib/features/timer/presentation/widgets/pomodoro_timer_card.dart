@@ -12,6 +12,12 @@ class PomodoroTimerCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final timerState = ref.watch(pomodoroTimerProvider);
+    final remainingAsync = ref.watch(pomodoroRemainingDurationProvider);
+    final remaining = remainingAsync.value ?? timerState.remainingDuration;
+    final totalMs = timerState.duration.inMilliseconds;
+    final currentProgress = totalMs <= 0
+        ? 1.0
+        : ((totalMs - remaining.inMilliseconds) / totalMs).clamp(0.0, 1.0);
     final notifier = ref.read(pomodoroTimerProvider.notifier);
 
     final isStopped = timerState.status == TimerStatus.stopped;
@@ -106,7 +112,7 @@ class PomodoroTimerCard extends ConsumerWidget {
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Text(
                   TimeUtils.formatDigital(
-                    timerState.remainingDuration.inSeconds,
+                    remaining.inSeconds,
                   ),
                   style: const TextStyle(
                     fontFamily: 'monospace',
@@ -123,7 +129,7 @@ class PomodoroTimerCard extends ConsumerWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
-                value: timerState.progress,
+                value: currentProgress,
                 minHeight: 6,
                 backgroundColor: ChronologTheme.zinc800,
                 color: isCompleted
