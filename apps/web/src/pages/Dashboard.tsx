@@ -393,11 +393,15 @@ const [completedTaskIds, setCompletedTaskIds] = useState<string[]>([]);
     onTaskCompleted: () => {
       refreshTasks();
     },
+    onPomodoroUpdated: (data) => {
+      window.dispatchEvent(new CustomEvent("pomodoro:updated", { detail: data.plan }));
+    },
     onReconnect: () => {
       onUserUpdate();
       fetchTimeBlocks();
       fetchTodaySummary();
       refreshTasks();
+      window.dispatchEvent(new CustomEvent("pomodoro:reconnect"));
     },
   });
 

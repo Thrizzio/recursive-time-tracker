@@ -22,6 +22,7 @@ export type WebSocketSyncOptions = {
   onTrackingReset?: () => void;
   onTimeBlockCreated?: (data: { block: any; trackingStartedAt: string }) => void;
   onTaskCompleted?: (data: { taskIds: string[] }) => void;
+  onPomodoroUpdated?: (data: { plan: any }) => void;
   onReconnect?: () => void;
 };
 
@@ -36,6 +37,7 @@ export function useWebSocketSync({
   onTrackingReset,
   onTimeBlockCreated,
   onTaskCompleted,
+  onPomodoroUpdated,
   onReconnect,
 }: WebSocketSyncOptions) {
   const wsRef = useRef<WebSocket | null>(null);
@@ -49,6 +51,7 @@ export function useWebSocketSync({
     onTrackingReset,
     onTimeBlockCreated,
     onTaskCompleted,
+    onPomodoroUpdated,
     onReconnect,
   });
 
@@ -58,9 +61,10 @@ export function useWebSocketSync({
       onTrackingReset,
       onTimeBlockCreated,
       onTaskCompleted,
+      onPomodoroUpdated,
       onReconnect,
     };
-  }, [onTrackingStarted, onTrackingReset, onTimeBlockCreated, onTaskCompleted, onReconnect]);
+  }, [onTrackingStarted, onTrackingReset, onTimeBlockCreated, onTaskCompleted, onPomodoroUpdated, onReconnect]);
 
   useEffect(() => {
     if (!enabled) {
@@ -116,6 +120,9 @@ export function useWebSocketSync({
                 break;
               case "task.completed":
                 callbacksRef.current.onTaskCompleted?.(data);
+                break;
+              case "pomodoro.updated":
+                callbacksRef.current.onPomodoroUpdated?.(data);
                 break;
               case "connected":
                 console.log("[WS] Handshake acknowledged for userId:", data?.userId);
