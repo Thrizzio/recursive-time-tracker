@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/config/api_config.dart';
 import '../../../core/config/auth_config.dart';
+import '../../../core/notifications/notification_service.dart';
 import '../../../shared/theme/chronolog_theme.dart';
 import '../../../shared/widgets/error_retry.dart';
 import '../../../shared/widgets/loading_card.dart';
@@ -327,7 +328,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Notifications Status (Phase 7)
+            // Notifications Card
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -335,20 +336,54 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Notifications (Phase 7)',
+                      'Notifications',
                       style: TextStyle(
                         color: ChronologTheme.zinc50,
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Local 2-hour reminders and Pomodoro timer completion notifications will be configurable here.',
-                      style: TextStyle(
-                        color: ChronologTheme.zinc400,
-                        fontSize: 13,
-                      ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: const [
+                              Text(
+                                'Pomodoro timer',
+                                style: TextStyle(
+                                  color: ChronologTheme.zinc200,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Get notified for each break and session start',
+                                style: TextStyle(
+                                  color: ChronologTheme.zinc400,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: ref.watch(notificationServiceProvider).pomodoroNotificationsEnabled,
+                          activeThumbColor: ChronologTheme.cyan400,
+                          onChanged: (val) async {
+                            final notificationService = ref.read(notificationServiceProvider);
+                            if (val) {
+                              await notificationService.requestPermissions();
+                            }
+                            await notificationService.setPomodoroNotificationsEnabled(val);
+                            setState(() {});
+                          },
+                        ),
+                      ],
                     ),
                   ],
                 ),

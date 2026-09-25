@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { PomodoroPlan, PomodoroStartParams, PomodoroPhase } from '../types/pomodoro';
 import * as pomodoroService from '../services/pomodoro';
+import { showNotification, playNotificationSound } from '../utils/notifications';
+import { getNotificationPrefs } from '../utils/notificationPrefs';
 
 // Pure client-side advancement matching server state machine
 function advancePlan(plan: PomodoroPlan, nowMs: number): { plan: PomodoroPlan; changed: boolean } {
@@ -139,6 +141,61 @@ export function usePomodoro() {
     if (!rawPlan) return null;
     return advancePlan(rawPlan, now).plan;
   }, [rawPlan, now]);
+
+  // Decoupled notification side effect on Pomodoro phase transitions
+  const lastPhaseKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!plan) {
+      lastPhaseKeyRef.current = null;
+      return;
+    }
+
+    const currentKey = `${plan.id}:${plan.status}:${plan.currentPhase}:${plan.currentSession}:${plan.completedSessions}`;
+
+    // On initial mount or if plan just loaded, record key without notifying
+    if (lastPhaseKeyRef.current === null) {
+      lastPhaseKeyRef.current = currentKey;
+      return;
+    }
+
+    if (lastPhaseKeyRef.current !== currentKey) {
+      lastPhaseKeyRef.current = currentKey;
+
+      // Only notify when enabled in settings
+      if (getNotificationPrefs().timerNotificationsEnabled) {
+        try {
+          if (plan.status === 'completed') {
+            showNotification(
+              'Pomodoro Complete!',
+              `Great job! You finished all ${plan.totalSessions} focus sessions.`
+            );
+            playNotificationSound();
+          } else if (plan.status === 'focus') {
+            showNotification(
+              `Focus Session ${plan.currentSession} Started`,
+              `Time to focus! Session ${plan.currentSession} of ${plan.totalSessions} is underway.`
+            );
+            playNotificationSound();
+          } else if (plan.currentPhase === 'longBreak') {
+            showNotification(
+              'Long Break Started',
+              `Enjoy your long break! Session ${plan.currentSession} of ${plan.totalSessions} begins after this.`
+            );
+            playNotificationSound();
+          } else if (plan.currentPhase === 'shortBreak') {
+            showNotification(
+              'Short Break Started',
+              `Take a break! Session ${plan.currentSession} of ${plan.totalSessions} begins after this.`
+            );
+            playNotificationSound();
+          }
+        } catch {
+          // Notifications are strictly independent: never throw or disrupt Pomodoro state
+        }
+      }
+    }
+  }, [plan]);
 
   const fetchCurrent = useCallback(() => {
     pomodoroService

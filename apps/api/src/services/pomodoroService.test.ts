@@ -433,4 +433,158 @@ function createMockPlan(overrides: Partial<PomodoroPlanState> = {}): PomodoroPla
   console.log("✓ Test 16 passed: Correct session number and phase maintained through every transition");
 }
 
-console.log("\nAll 16 pomodoro service tests passed successfully!\n");
+// ── Test 17: Focus -> break transition with custom durations ──────────────────
+{
+  const t0 = new Date("2026-09-24T10:00:00.000Z");
+  const customFocusSeconds = 2100; // 35 min
+  const customShortBreakSeconds = 420; // 7 min
+  const customLongBreakSeconds = 1500; // 25 min
+
+  const plan: PomodoroPlan = {
+    id: "plan-custom-1",
+    userId: 1,
+    status: "focus",
+    currentPhase: "focus",
+    currentSession: 1,
+    totalSessions: 4,
+    focusDurationSeconds: customFocusSeconds,
+    shortBreakDurationSeconds: customShortBreakSeconds,
+    longBreakDurationSeconds: customLongBreakSeconds,
+    longBreakInterval: 4,
+    autoStartBreaks: true,
+    autoStartFocus: true,
+    phaseStartedAt: t0,
+    phaseEndsAt: new Date(t0.getTime() + customFocusSeconds * 1000), // 10:35:00
+    pausedAt: null,
+    pausedRemainingSeconds: null,
+    totalFocusSeconds: 0,
+    totalBreakSeconds: 0,
+    totalPausedSeconds: 0,
+    completedSessions: 0,
+    taskId: null,
+    taskTitle: null,
+    startedAt: t0,
+    completedAt: null,
+  };
+
+  // Advance exactly when 35m focus ends
+  const atFocusEnd = new Date("2026-09-24T10:35:00.000Z");
+  const res = advancePlanToTime(plan, atFocusEnd);
+
+  assert.equal(res.changed, true);
+  assert.equal(res.plan.status, "shortBreak");
+  assert.equal(res.plan.currentPhase, "shortBreak");
+  assert.equal(res.plan.currentSession, 2);
+  assert.equal(res.plan.completedSessions, 1);
+  assert.equal(res.plan.totalFocusSeconds, 2100);
+  assert.equal(
+    res.plan.phaseEndsAt?.toISOString(),
+    new Date("2026-09-24T10:42:00.000Z").toISOString(),
+    "Break ends after custom 7 min (420s)"
+  );
+  console.log("✓ Test 17 passed: Focus -> break transition with custom durations");
+}
+
+// ── Test 18: Break -> focus transition with custom durations ──────────────────
+{
+  const t0 = new Date("2026-09-24T10:35:00.000Z");
+  const customFocusSeconds = 2100; // 35 min
+  const customShortBreakSeconds = 420; // 7 min
+  const customLongBreakSeconds = 1500; // 25 min
+
+  const breakPlan: PomodoroPlan = {
+    id: "plan-custom-2",
+    userId: 1,
+    status: "shortBreak",
+    currentPhase: "shortBreak",
+    currentSession: 2,
+    totalSessions: 4,
+    focusDurationSeconds: customFocusSeconds,
+    shortBreakDurationSeconds: customShortBreakSeconds,
+    longBreakDurationSeconds: customLongBreakSeconds,
+    longBreakInterval: 4,
+    autoStartBreaks: true,
+    autoStartFocus: true,
+    phaseStartedAt: t0,
+    phaseEndsAt: new Date(t0.getTime() + customShortBreakSeconds * 1000), // 10:42:00
+    pausedAt: null,
+    pausedRemainingSeconds: null,
+    totalFocusSeconds: 2100,
+    totalBreakSeconds: 0,
+    totalPausedSeconds: 0,
+    completedSessions: 1,
+    taskId: null,
+    taskTitle: null,
+    startedAt: new Date("2026-09-24T10:00:00.000Z"),
+    completedAt: null,
+  };
+
+  // Advance when 7m break ends
+  const atBreakEnd = new Date("2026-09-24T10:42:00.000Z");
+  const res = advancePlanToTime(breakPlan, atBreakEnd);
+
+  assert.equal(res.changed, true);
+  assert.equal(res.plan.status, "focus");
+  assert.equal(res.plan.currentPhase, "focus");
+  assert.equal(res.plan.currentSession, 2);
+  assert.equal(res.plan.completedSessions, 1);
+  assert.equal(res.plan.totalBreakSeconds, 420);
+  assert.equal(
+    res.plan.phaseEndsAt?.toISOString(),
+    new Date("2026-09-24T11:17:00.000Z").toISOString(),
+    "Focus ends after custom 35 min (2100s)"
+  );
+  console.log("✓ Test 18 passed: Break -> focus transition with custom durations");
+}
+
+// ── Test 19: Focus -> long break transition with custom long break duration ───
+{
+  const t0 = new Date("2026-09-24T10:00:00.000Z");
+  const customFocusSeconds = 1800; // 30 min
+  const customShortBreakSeconds = 300; // 5 min
+  const customLongBreakSeconds = 1200; // 20 min
+
+  const plan: PomodoroPlan = {
+    id: "plan-custom-3",
+    userId: 1,
+    status: "focus",
+    currentPhase: "focus",
+    currentSession: 2,
+    totalSessions: 4,
+    focusDurationSeconds: customFocusSeconds,
+    shortBreakDurationSeconds: customShortBreakSeconds,
+    longBreakDurationSeconds: customLongBreakSeconds,
+    longBreakInterval: 2, // long break on session 2
+    autoStartBreaks: true,
+    autoStartFocus: true,
+    phaseStartedAt: t0,
+    phaseEndsAt: new Date(t0.getTime() + customFocusSeconds * 1000), // 10:30:00
+    pausedAt: null,
+    pausedRemainingSeconds: null,
+    totalFocusSeconds: 1800,
+    totalBreakSeconds: 300,
+    totalPausedSeconds: 0,
+    completedSessions: 1,
+    taskId: null,
+    taskTitle: null,
+    startedAt: new Date("2026-09-24T09:25:00.000Z"),
+    completedAt: null,
+  };
+
+  const atFocusEnd = new Date("2026-09-24T10:30:00.000Z");
+  const res = advancePlanToTime(plan, atFocusEnd);
+
+  assert.equal(res.changed, true);
+  assert.equal(res.plan.status, "longBreak");
+  assert.equal(res.plan.currentPhase, "longBreak");
+  assert.equal(res.plan.currentSession, 3);
+  assert.equal(res.plan.completedSessions, 2);
+  assert.equal(
+    res.plan.phaseEndsAt?.toISOString(),
+    new Date("2026-09-24T10:50:00.000Z").toISOString(),
+    "Long break ends after custom 20 min (1200s)"
+  );
+  console.log("✓ Test 19 passed: Focus -> long break with custom long break duration");
+}
+
+console.log("\nAll pomodoro service tests passed successfully!\n");

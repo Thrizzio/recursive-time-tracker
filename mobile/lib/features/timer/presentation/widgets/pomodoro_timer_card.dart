@@ -42,15 +42,27 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
   bool _isCustomFocus = false;
   late final TextEditingController _customFocusController;
 
+  // Custom short break duration state
+  bool _isCustomShortBreak = false;
+  late final TextEditingController _customShortBreakController;
+
+  // Custom long break duration state
+  bool _isCustomLongBreak = false;
+  late final TextEditingController _customLongBreakController;
+
   @override
   void initState() {
     super.initState();
     _customFocusController = TextEditingController();
+    _customShortBreakController = TextEditingController();
+    _customLongBreakController = TextEditingController();
   }
 
   @override
   void dispose() {
     _customFocusController.dispose();
+    _customShortBreakController.dispose();
+    _customLongBreakController.dispose();
     super.dispose();
   }
 
@@ -60,6 +72,22 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
     if (trimmed.isEmpty) return false;
     final val = int.tryParse(trimmed);
     return val != null && val >= 1 && val <= 180 && val.toString() == trimmed;
+  }
+
+  bool get _isCustomShortBreakValid {
+    if (!_isCustomShortBreak) return true;
+    final trimmed = _customShortBreakController.text.trim();
+    if (trimmed.isEmpty) return false;
+    final val = int.tryParse(trimmed);
+    return val != null && val >= 1 && val <= 60 && val.toString() == trimmed;
+  }
+
+  bool get _isCustomLongBreakValid {
+    if (!_isCustomLongBreak) return true;
+    final trimmed = _customLongBreakController.text.trim();
+    if (trimmed.isEmpty) return false;
+    final val = int.tryParse(trimmed);
+    return val != null && val >= 1 && val <= 90 && val.toString() == trimmed;
   }
 
   void _onPresetSelect(int mins) {
@@ -93,8 +121,72 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
     });
   }
 
+  void _onShortBreakPresetSelect(int mins) {
+    setState(() {
+      _isCustomShortBreak = false;
+      _shortBreakMinutes = mins;
+    });
+  }
+
+  void _onCustomShortBreakSelect() {
+    setState(() {
+      _isCustomShortBreak = true;
+      if (_customShortBreakController.text.trim().isEmpty) {
+        _customShortBreakController.text = '$_shortBreakMinutes';
+      } else {
+        final parsed = int.tryParse(_customShortBreakController.text.trim());
+        if (parsed != null && parsed >= 1 && parsed <= 60) {
+          _shortBreakMinutes = parsed;
+        }
+      }
+    });
+  }
+
+  void _onCustomShortBreakChanged(String val) {
+    final trimmed = val.trim();
+    final parsed = int.tryParse(trimmed);
+    setState(() {
+      if (parsed != null && parsed >= 1 && parsed <= 60 && parsed.toString() == trimmed) {
+        _shortBreakMinutes = parsed;
+      }
+    });
+  }
+
+  void _onLongBreakPresetSelect(int mins) {
+    setState(() {
+      _isCustomLongBreak = false;
+      _longBreakMinutes = mins;
+    });
+  }
+
+  void _onCustomLongBreakSelect() {
+    setState(() {
+      _isCustomLongBreak = true;
+      if (_customLongBreakController.text.trim().isEmpty) {
+        _customLongBreakController.text = '$_longBreakMinutes';
+      } else {
+        final parsed = int.tryParse(_customLongBreakController.text.trim());
+        if (parsed != null && parsed >= 1 && parsed <= 90) {
+          _longBreakMinutes = parsed;
+        }
+      }
+    });
+  }
+
+  void _onCustomLongBreakChanged(String val) {
+    final trimmed = val.trim();
+    final parsed = int.tryParse(trimmed);
+    setState(() {
+      if (parsed != null && parsed >= 1 && parsed <= 90 && parsed.toString() == trimmed) {
+        _longBreakMinutes = parsed;
+      }
+    });
+  }
+
   Future<void> _handleStartWork() async {
     if (_isCustomFocus && !_isCustomFocusValid) return;
+    if (_isCustomShortBreak && !_isCustomShortBreakValid) return;
+    if (_isCustomLongBreak && !_isCustomLongBreakValid) return;
     setState(() => _isStarting = true);
     try {
       await ref.read(pomodoroTimerProvider.notifier).startPlan(
@@ -412,6 +504,7 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
 
         // Break Durations (Short Break & Long Break)
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: Column(
@@ -429,7 +522,9 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
                         ),
                       ),
                       Text(
-                        '${_shortBreakMinutes}m',
+                        _isCustomShortBreak && (!_isCustomShortBreakValid || _customShortBreakController.text.trim().isEmpty)
+                            ? 'Custom'
+                            : '${_shortBreakMinutes}m',
                         style: const TextStyle(
                           color: ChronologTheme.emerald400,
                           fontSize: 12,
@@ -440,41 +535,126 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
                   ),
                   const SizedBox(height: 6),
                   Row(
-                    children: [5, 10].map((m) {
-                      final isSelected = _shortBreakMinutes == m;
-                      return Expanded(
+                    children: [
+                      ...[5, 10].map((m) {
+                        final isSelected = !_isCustomShortBreak && _shortBreakMinutes == m;
+                        return Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: InkWell(
+                              onTap: () => _onShortBreakPresetSelect(m),
+                              borderRadius: BorderRadius.circular(6),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? ChronologTheme.emerald950 : ChronologTheme.zinc950,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? ChronologTheme.emerald400
+                                        : ChronologTheme.zinc800,
+                                    width: isSelected ? 1.5 : 1.0,
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  '${m}m',
+                                  style: TextStyle(
+                                    color: isSelected ? ChronologTheme.emerald400 : ChronologTheme.zinc400,
+                                    fontSize: 11,
+                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                      Expanded(
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 2),
                           child: InkWell(
-                            onTap: () => setState(() => _shortBreakMinutes = m),
+                            onTap: _onCustomShortBreakSelect,
                             borderRadius: BorderRadius.circular(6),
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 6),
                               decoration: BoxDecoration(
-                                color: isSelected ? ChronologTheme.emerald950 : ChronologTheme.zinc950,
+                                color: _isCustomShortBreak ? ChronologTheme.emerald950 : ChronologTheme.zinc950,
                                 borderRadius: BorderRadius.circular(6),
                                 border: Border.all(
-                                  color: isSelected
+                                  color: _isCustomShortBreak
                                       ? ChronologTheme.emerald400
                                       : ChronologTheme.zinc800,
-                                  width: isSelected ? 1.5 : 1.0,
+                                  width: _isCustomShortBreak ? 1.5 : 1.0,
                                 ),
                               ),
                               alignment: Alignment.center,
                               child: Text(
-                                '${m}m',
+                                'Custom',
                                 style: TextStyle(
-                                  color: isSelected ? ChronologTheme.emerald400 : ChronologTheme.zinc400,
-                                  fontSize: 11,
-                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                                  color: _isCustomShortBreak ? ChronologTheme.emerald400 : ChronologTheme.zinc400,
+                                  fontSize: 10,
+                                  fontWeight: _isCustomShortBreak ? FontWeight.bold : FontWeight.w500,
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      );
-                    }).toList(),
+                      ),
+                    ],
                   ),
+                  if (_isCustomShortBreak) ...[
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: _customShortBreakController,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      style: const TextStyle(
+                        color: ChronologTheme.zinc50,
+                        fontSize: 12,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: 'Min (1–60)',
+                        hintStyle: const TextStyle(
+                          color: ChronologTheme.zinc500,
+                          fontSize: 11,
+                        ),
+                        suffixText: 'm',
+                        suffixStyle: const TextStyle(
+                          color: ChronologTheme.zinc400,
+                          fontSize: 11,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 8,
+                        ),
+                        filled: true,
+                        fillColor: ChronologTheme.zinc950,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          borderSide: const BorderSide(color: ChronologTheme.zinc800),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          borderSide: const BorderSide(color: ChronologTheme.zinc800),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          borderSide: const BorderSide(color: ChronologTheme.emerald400),
+                        ),
+                        errorText: _customShortBreakController.text.trim().isEmpty
+                            ? 'Required'
+                            : !_isCustomShortBreakValid
+                                ? 'Enter 1–60 min'
+                                : null,
+                        errorStyle: const TextStyle(
+                          color: ChronologTheme.red400,
+                          fontSize: 10,
+                        ),
+                      ),
+                      onChanged: _onCustomShortBreakChanged,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -495,7 +675,9 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
                         ),
                       ),
                       Text(
-                        '${_longBreakMinutes}m',
+                        _isCustomLongBreak && (!_isCustomLongBreakValid || _customLongBreakController.text.trim().isEmpty)
+                            ? 'Custom'
+                            : '${_longBreakMinutes}m',
                         style: const TextStyle(
                           color: Color(0xFF818CF8),
                           fontSize: 12,
@@ -506,41 +688,126 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
                   ),
                   const SizedBox(height: 6),
                   Row(
-                    children: [15, 20].map((m) {
-                      final isSelected = _longBreakMinutes == m;
-                      return Expanded(
+                    children: [
+                      ...[15, 20].map((m) {
+                        final isSelected = !_isCustomLongBreak && _longBreakMinutes == m;
+                        return Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: InkWell(
+                              onTap: () => _onLongBreakPresetSelect(m),
+                              borderRadius: BorderRadius.circular(6),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: isSelected ? const Color(0xFF1E1B4B) : ChronologTheme.zinc950,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? const Color(0xFF818CF8)
+                                        : ChronologTheme.zinc800,
+                                    width: isSelected ? 1.5 : 1.0,
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  '${m}m',
+                                  style: TextStyle(
+                                    color: isSelected ? const Color(0xFF818CF8) : ChronologTheme.zinc400,
+                                    fontSize: 11,
+                                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                      Expanded(
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 2),
                           child: InkWell(
-                            onTap: () => setState(() => _longBreakMinutes = m),
+                            onTap: _onCustomLongBreakSelect,
                             borderRadius: BorderRadius.circular(6),
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 6),
                               decoration: BoxDecoration(
-                                color: isSelected ? const Color(0xFF1E1B4B) : ChronologTheme.zinc950,
+                                color: _isCustomLongBreak ? const Color(0xFF1E1B4B) : ChronologTheme.zinc950,
                                 borderRadius: BorderRadius.circular(6),
                                 border: Border.all(
-                                  color: isSelected
+                                  color: _isCustomLongBreak
                                       ? const Color(0xFF818CF8)
                                       : ChronologTheme.zinc800,
-                                  width: isSelected ? 1.5 : 1.0,
+                                  width: _isCustomLongBreak ? 1.5 : 1.0,
                                 ),
                               ),
                               alignment: Alignment.center,
                               child: Text(
-                                '${m}m',
+                                'Custom',
                                 style: TextStyle(
-                                  color: isSelected ? const Color(0xFF818CF8) : ChronologTheme.zinc400,
-                                  fontSize: 11,
-                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                                  color: _isCustomLongBreak ? const Color(0xFF818CF8) : ChronologTheme.zinc400,
+                                  fontSize: 10,
+                                  fontWeight: _isCustomLongBreak ? FontWeight.bold : FontWeight.w500,
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      );
-                    }).toList(),
+                      ),
+                    ],
                   ),
+                  if (_isCustomLongBreak) ...[
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: _customLongBreakController,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      style: const TextStyle(
+                        color: ChronologTheme.zinc50,
+                        fontSize: 12,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: 'Min (1–90)',
+                        hintStyle: const TextStyle(
+                          color: ChronologTheme.zinc500,
+                          fontSize: 11,
+                        ),
+                        suffixText: 'm',
+                        suffixStyle: const TextStyle(
+                          color: ChronologTheme.zinc400,
+                          fontSize: 11,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 8,
+                        ),
+                        filled: true,
+                        fillColor: ChronologTheme.zinc950,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          borderSide: const BorderSide(color: ChronologTheme.zinc800),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          borderSide: const BorderSide(color: ChronologTheme.zinc800),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          borderSide: const BorderSide(color: Color(0xFF818CF8)),
+                        ),
+                        errorText: _customLongBreakController.text.trim().isEmpty
+                            ? 'Required'
+                            : !_isCustomLongBreakValid
+                                ? 'Enter 1–90 min'
+                                : null,
+                        errorStyle: const TextStyle(
+                          color: ChronologTheme.red400,
+                          fontSize: 10,
+                        ),
+                      ),
+                      onChanged: _onCustomLongBreakChanged,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -689,7 +956,10 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
         // PROMINENT "I WILL WORK" BUTTON
         Builder(
           builder: (context) {
-            final isButtonDisabled = _isStarting || (_isCustomFocus && !_isCustomFocusValid);
+            final isButtonDisabled = _isStarting ||
+                (_isCustomFocus && !_isCustomFocusValid) ||
+                (_isCustomShortBreak && !_isCustomShortBreakValid) ||
+                (_isCustomLongBreak && !_isCustomLongBreakValid);
             return SizedBox(
               width: double.infinity,
               height: 48,
