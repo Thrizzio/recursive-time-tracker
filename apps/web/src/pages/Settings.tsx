@@ -294,8 +294,8 @@ export function Settings({ user, onUserUpdate }: SettingsProps) {
             />
 
             <ToggleRow
-              label="Timer notifications"
-              description="Get notified when your focus timer finishes."
+              label="Pomodoro timer"
+              description="Get notified for each break and session start."
               checked={prefs.timerNotificationsEnabled}
               onChange={(v) => handlePrefChange('timerNotificationsEnabled', v)}
               disabled={permission !== 'granted'}

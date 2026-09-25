@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/notifications/notification_service.dart';
 import '../../../shared/utils/time_utils.dart';
 import '../data/pomodoro_repository.dart';
 import '../data/timer_storage.dart';
@@ -17,11 +18,72 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
   TimerStorage get _storage => ref.read(timerStorageProvider);
   PomodoroRepository get _repo => ref.read(pomodoroRepositoryProvider);
 
+  String? _lastPhaseKey;
+
+  void _updateState(PomodoroPlanModel? next) {
+    final previous = state;
+    state = next;
+    _maybeNotifyTransition(previous, next);
+  }
+
+  void _maybeNotifyTransition(PomodoroPlanModel? previous, PomodoroPlanModel? next) {
+    if (next == null) {
+      _lastPhaseKey = null;
+      return;
+    }
+
+    final nextKey =
+        '${next.id}:${next.status}:${next.currentPhase}:${next.currentSession}:${next.completedSessions}';
+    if (_lastPhaseKey == null) {
+      _lastPhaseKey = nextKey;
+      return;
+    }
+
+    if (_lastPhaseKey != nextKey) {
+      _lastPhaseKey = nextKey;
+      try {
+        final notifications = ref.read(notificationServiceProvider);
+        if (next.isCompleted && (previous == null || !previous.isCompleted)) {
+          notifications.showNotification(
+            id: 100,
+            title: 'Pomodoro Complete!',
+            body: 'Great job! You finished all ${next.totalSessions} focus sessions.',
+          );
+        } else if (next.currentPhase == 'focus' && previous?.currentPhase != 'focus') {
+          notifications.showNotification(
+            id: 101,
+            title: 'Focus Session ${next.currentSession} Started',
+            body: 'Time to focus! Session ${next.currentSession} of ${next.totalSessions} is underway.',
+          );
+        } else if (next.currentPhase == 'longBreak' && previous?.currentPhase != 'longBreak') {
+          notifications.showNotification(
+            id: 102,
+            title: 'Long Break Started',
+            body: 'Enjoy your long break! Session ${next.currentSession} of ${next.totalSessions} begins after this.',
+          );
+        } else if (next.currentPhase == 'shortBreak' && previous?.currentPhase != 'shortBreak') {
+          notifications.showNotification(
+            id: 103,
+            title: 'Short Break Started',
+            body: 'Take a break! Session ${next.currentSession} of ${next.totalSessions} begins after this.',
+          );
+        }
+      } catch (e) {
+        // Notifications are strictly independent: never throw or block Pomodoro state
+        debugPrint('[PomodoroNotifier] Notification error: $e');
+      }
+    }
+  }
+
   @override
   PomodoroPlanModel? build() {
     // 1. Recover cached plan if available, advancing to current time
     final cached = _storage.loadPlan();
     final effective = cached?.advanceToTime(TimeUtils.now());
+    if (effective != null) {
+      _lastPhaseKey =
+          '${effective.id}:${effective.status}:${effective.currentPhase}:${effective.currentSession}:${effective.completedSessions}';
+    }
 
     // 2. Fetch authoritative state from backend
     Future.microtask(() => refreshFromRemote());
@@ -35,7 +97,7 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
       final now = TimeUtils.now();
       if (!now.isBefore(state!.phaseEndsAt!)) {
         final advanced = state!.advanceToTime(now);
-        state = advanced;
+        _updateState(advanced);
         _storage.savePlan(advanced);
         refreshFromRemote();
       }
@@ -47,7 +109,7 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
     try {
       final plan = await _repo.getCurrentPlan();
       final effective = plan?.advanceToTime(TimeUtils.now());
-      state = effective;
+      _updateState(effective);
       await _storage.savePlan(effective);
     } catch (e) {
       debugPrint('[PomodoroNotifier] Failed to refresh current plan: $e');
@@ -58,16 +120,16 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
   void syncFromRemote(Map<String, dynamic>? planJson) {
     if (planJson != null) {
       final parsed = PomodoroPlanModel.fromJson(planJson);
-      state = parsed.advanceToTime(TimeUtils.now());
+      _updateState(parsed.advanceToTime(TimeUtils.now()));
     } else {
-      state = null;
+      _updateState(null);
     }
     _storage.savePlan(state);
   }
 
   /// Directly set plan (useful in tests or local overrides).
   void setLocalPlan(PomodoroPlanModel? plan) {
-    state = plan?.advanceToTime(TimeUtils.now());
+    _updateState(plan?.advanceToTime(TimeUtils.now()));
     _storage.savePlan(state);
   }
 
@@ -94,7 +156,7 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
       taskId: taskId,
       taskTitle: taskTitle,
     );
-    state = newPlan;
+    _updateState(newPlan);
     await _storage.savePlan(newPlan);
     return newPlan;
   }
@@ -103,7 +165,7 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
   Future<void> pause() async {
     if (state == null) return;
     final updated = await _repo.pausePlan(state!.id);
-    state = updated;
+    _updateState(updated);
     await _storage.savePlan(updated);
   }
 
@@ -111,7 +173,7 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
   Future<void> resume() async {
     if (state == null) return;
     final updated = await _repo.resumePlan(state!.id);
-    state = updated;
+    _updateState(updated);
     await _storage.savePlan(updated);
   }
 
@@ -119,7 +181,7 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
   Future<void> nextPhase() async {
     if (state == null) return;
     final updated = await _repo.nextPhase(state!.id);
-    state = updated;
+    _updateState(updated);
     await _storage.savePlan(updated);
   }
 
@@ -127,7 +189,7 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
   Future<void> skipPhase() async {
     if (state == null) return;
     final updated = await _repo.skipPhase(state!.id);
-    state = updated;
+    _updateState(updated);
     await _storage.savePlan(updated);
   }
 
@@ -135,7 +197,7 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
   Future<void> cancelPlan() async {
     if (state == null) return;
     final updated = await _repo.cancelPlan(state!.id);
-    state = updated;
+    _updateState(updated);
     await _storage.savePlan(updated);
   }
 
@@ -144,7 +206,7 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
     if (state != null && state!.isActive) {
       await cancelPlan();
     } else {
-      state = null;
+      _updateState(null);
       await _storage.clearPlan();
     }
   }
