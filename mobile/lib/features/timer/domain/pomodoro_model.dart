@@ -65,35 +65,198 @@ class PomodoroPlanModel {
       status == 'longBreak' ||
       status == 'paused';
 
+  /// Advances expired phase boundaries sequentially up to [now], deriving the current phase,
+  /// session number, and completion state from timestamps.
+  PomodoroPlanModel advanceToTime(DateTime now) {
+    if (isCompleted || isCancelled || isPaused || phaseEndsAt == null) {
+      return this;
+    }
+    if (now.isBefore(phaseEndsAt!)) {
+      return this;
+    }
+
+    var current = this;
+
+    while (!current.isCompleted &&
+        !current.isCancelled &&
+        !current.isPaused &&
+        current.phaseEndsAt != null &&
+        !now.isBefore(current.phaseEndsAt!)) {
+      final boundary = current.phaseEndsAt!;
+      final phaseStarted = current.phaseStartedAt ?? boundary;
+      final elapsed = boundary.difference(phaseStarted).inSeconds.clamp(0, 100000000);
+
+      final addFocus = current.currentPhase == 'focus' ? elapsed : 0;
+      final addBreak = current.currentPhase != 'focus' ? elapsed : 0;
+
+      final newTotalFocus = current.totalFocusSeconds + addFocus;
+      final newTotalBreak = current.totalBreakSeconds + addBreak;
+
+      if (current.currentPhase == 'focus') {
+        final newCompleted = current.completedSessions + 1;
+        if (newCompleted >= current.totalSessions) {
+          current = PomodoroPlanModel(
+            id: current.id,
+            userId: current.userId,
+            status: 'completed',
+            currentPhase: current.currentPhase,
+            currentSession: current.totalSessions,
+            totalSessions: current.totalSessions,
+            focusDurationSeconds: current.focusDurationSeconds,
+            shortBreakDurationSeconds: current.shortBreakDurationSeconds,
+            longBreakDurationSeconds: current.longBreakDurationSeconds,
+            longBreakInterval: current.longBreakInterval,
+            autoStartBreaks: current.autoStartBreaks,
+            autoStartFocus: current.autoStartFocus,
+            phaseStartedAt: null,
+            phaseEndsAt: null,
+            pausedAt: null,
+            pausedRemainingSeconds: null,
+            totalFocusSeconds: newTotalFocus,
+            totalBreakSeconds: newTotalBreak,
+            totalPausedSeconds: current.totalPausedSeconds,
+            completedSessions: newCompleted,
+            taskId: current.taskId,
+            taskTitle: current.taskTitle,
+            startedAt: current.startedAt,
+            completedAt: boundary,
+          );
+          break;
+        }
+
+        final isLong = (newCompleted % current.longBreakInterval == 0);
+        final nextPhase = isLong ? 'longBreak' : 'shortBreak';
+        final breakDuration =
+            isLong ? current.longBreakDurationSeconds : current.shortBreakDurationSeconds;
+
+        if (current.autoStartBreaks) {
+          final nextEndsAt = boundary.add(Duration(seconds: breakDuration));
+          current = current.copyWith(
+            status: nextPhase,
+            currentPhase: nextPhase,
+            currentSession: newCompleted + 1,
+            completedSessions: newCompleted,
+            phaseStartedAt: boundary,
+            phaseEndsAt: nextEndsAt,
+            totalFocusSeconds: newTotalFocus,
+            totalBreakSeconds: newTotalBreak,
+          );
+        } else {
+          current = PomodoroPlanModel(
+            id: current.id,
+            userId: current.userId,
+            status: 'paused',
+            currentPhase: nextPhase,
+            currentSession: newCompleted + 1,
+            totalSessions: current.totalSessions,
+            focusDurationSeconds: current.focusDurationSeconds,
+            shortBreakDurationSeconds: current.shortBreakDurationSeconds,
+            longBreakDurationSeconds: current.longBreakDurationSeconds,
+            longBreakInterval: current.longBreakInterval,
+            autoStartBreaks: current.autoStartBreaks,
+            autoStartFocus: current.autoStartFocus,
+            phaseStartedAt: null,
+            phaseEndsAt: null,
+            pausedAt: boundary,
+            pausedRemainingSeconds: breakDuration,
+            totalFocusSeconds: newTotalFocus,
+            totalBreakSeconds: newTotalBreak,
+            totalPausedSeconds: current.totalPausedSeconds,
+            completedSessions: newCompleted,
+            taskId: current.taskId,
+            taskTitle: current.taskTitle,
+            startedAt: current.startedAt,
+            completedAt: null,
+          );
+          break;
+        }
+      } else {
+        // Break -> Focus
+        final nextSession = current.completedSessions + 1;
+        final focusDuration = current.focusDurationSeconds;
+
+        if (current.autoStartFocus) {
+          final nextEndsAt = boundary.add(Duration(seconds: focusDuration));
+          current = current.copyWith(
+            status: 'focus',
+            currentPhase: 'focus',
+            currentSession: nextSession,
+            phaseStartedAt: boundary,
+            phaseEndsAt: nextEndsAt,
+            totalFocusSeconds: newTotalFocus,
+            totalBreakSeconds: newTotalBreak,
+          );
+        } else {
+          current = PomodoroPlanModel(
+            id: current.id,
+            userId: current.userId,
+            status: 'paused',
+            currentPhase: 'focus',
+            currentSession: nextSession,
+            totalSessions: current.totalSessions,
+            focusDurationSeconds: current.focusDurationSeconds,
+            shortBreakDurationSeconds: current.shortBreakDurationSeconds,
+            longBreakDurationSeconds: current.longBreakDurationSeconds,
+            longBreakInterval: current.longBreakInterval,
+            autoStartBreaks: current.autoStartBreaks,
+            autoStartFocus: current.autoStartFocus,
+            phaseStartedAt: null,
+            phaseEndsAt: null,
+            pausedAt: boundary,
+            pausedRemainingSeconds: focusDuration,
+            totalFocusSeconds: newTotalFocus,
+            totalBreakSeconds: newTotalBreak,
+            totalPausedSeconds: current.totalPausedSeconds,
+            completedSessions: current.completedSessions,
+            taskId: current.taskId,
+            taskTitle: current.taskTitle,
+            startedAt: current.startedAt,
+            completedAt: null,
+          );
+          break;
+        }
+      }
+    }
+
+    return current;
+  }
+
   /// Calculates remaining countdown duration derived from phaseEndsAt or paused remaining.
   Duration get remainingDuration {
     if (isCompleted || isCancelled) return Duration.zero;
     if (isPaused) {
       return Duration(seconds: pausedRemainingSeconds ?? 0);
     }
-    if (phaseEndsAt == null) return Duration.zero;
     final now = TimeUtils.now();
-    final diff = phaseEndsAt!.difference(now);
+    final effective = advanceToTime(now);
+    if (effective.isCompleted || effective.isCancelled) return Duration.zero;
+    if (effective.isPaused) {
+      return Duration(seconds: effective.pausedRemainingSeconds ?? 0);
+    }
+    if (effective.phaseEndsAt == null) return Duration.zero;
+    final diff = effective.phaseEndsAt!.difference(now);
     if (diff.isNegative) return Duration.zero;
     return diff;
   }
 
   /// Calculates live accumulated focus time (never includes paused time).
   int get liveFocusSeconds {
-    var total = totalFocusSeconds;
-    if (status == 'focus' && phaseStartedAt != null) {
+    final effective = advanceToTime(TimeUtils.now());
+    var total = effective.totalFocusSeconds;
+    if (effective.status == 'focus' && effective.phaseStartedAt != null) {
       final now = TimeUtils.now();
-      total += now.difference(phaseStartedAt!).inSeconds.clamp(0, 100000000);
+      total += now.difference(effective.phaseStartedAt!).inSeconds.clamp(0, 100000000);
     }
     return total;
   }
 
   /// Calculates live accumulated break time (never includes paused time).
   int get liveBreakSeconds {
-    var total = totalBreakSeconds;
-    if ((status == 'shortBreak' || status == 'longBreak') && phaseStartedAt != null) {
+    final effective = advanceToTime(TimeUtils.now());
+    var total = effective.totalBreakSeconds;
+    if ((effective.status == 'shortBreak' || effective.status == 'longBreak') && effective.phaseStartedAt != null) {
       final now = TimeUtils.now();
-      total += now.difference(phaseStartedAt!).inSeconds.clamp(0, 100000000);
+      total += now.difference(effective.phaseStartedAt!).inSeconds.clamp(0, 100000000);
     }
     return total;
   }

@@ -34,8 +34,8 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
   int _longBreakMinutes = 15;
   int _totalSessions = 4;
   int _longBreakInterval = 4;
-  bool _autoStartBreaks = false;
-  bool _autoStartFocus = false;
+  bool _autoStartBreaks = true;
+  bool _autoStartFocus = true;
   bool _isStarting = false;
 
   // Custom focus duration state
@@ -127,7 +127,8 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
     // 1-second reactive ticker triggers smooth UI rebuilds without network calls
     ref.watch(pomodoroTickerStreamProvider);
 
-    final plan = ref.watch(pomodoroTimerProvider);
+    final rawPlan = ref.watch(pomodoroTimerProvider);
+    final plan = rawPlan?.advanceToTime(TimeUtils.now());
     final notifier = ref.read(pomodoroTimerProvider.notifier);
 
     final isConfiguring =
@@ -787,7 +788,9 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
           children: [
             _buildPhaseBadge(plan.status, plan.currentPhase),
             Text(
-              'Session ${plan.currentSession} of ${plan.totalSessions}',
+              plan.currentPhase == 'focus'
+                  ? 'Session ${plan.currentSession} of ${plan.totalSessions}'
+                  : 'Next: Session ${plan.currentSession} of ${plan.totalSessions}',
               style: const TextStyle(
                 color: ChronologTheme.zinc400,
                 fontSize: 12,

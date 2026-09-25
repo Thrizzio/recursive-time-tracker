@@ -165,6 +165,7 @@ export function calculateNextTransition(
     if (newCompletedSessions >= plan.totalSessions) {
       return {
         status: "completed",
+        currentSession: plan.totalSessions,
         completedSessions: newCompletedSessions,
         totalFocusSeconds: newTotalFocus,
         totalBreakSeconds: newTotalBreak,
@@ -183,11 +184,12 @@ export function calculateNextTransition(
       ? plan.longBreakDurationSeconds
       : plan.shortBreakDurationSeconds;
 
-    if (plan.autoStartBreaks) {
+    if (plan.autoStartBreaks !== false) {
       const phaseEndsAt = new Date(now.getTime() + breakDuration * 1000);
       return {
         status: nextPhase,
         currentPhase: nextPhase,
+        currentSession: newCompletedSessions + 1,
         completedSessions: newCompletedSessions,
         phaseStartedAt: now,
         phaseEndsAt,
@@ -201,6 +203,7 @@ export function calculateNextTransition(
       return {
         status: "paused",
         currentPhase: nextPhase,
+        currentSession: newCompletedSessions + 1,
         completedSessions: newCompletedSessions,
         pausedAt: now,
         pausedRemainingSeconds: breakDuration,
@@ -216,7 +219,7 @@ export function calculateNextTransition(
     const nextSession = plan.completedSessions + 1;
     const focusDuration = plan.focusDurationSeconds;
 
-    if (plan.autoStartFocus) {
+    if (plan.autoStartFocus !== false) {
       const phaseEndsAt = new Date(now.getTime() + focusDuration * 1000);
       return {
         status: "focus",
@@ -245,6 +248,40 @@ export function calculateNextTransition(
       };
     }
   }
+}
+
+export function advancePlanToTime(
+  plan: PomodoroPlanState,
+  now: Date
+): { plan: PomodoroPlanState; changed: boolean } {
+  if (plan.status === "completed" || plan.status === "cancelled" || plan.status === "paused") {
+    return { plan, changed: false };
+  }
+
+  if (!plan.phaseEndsAt || now.getTime() < plan.phaseEndsAt.getTime()) {
+    return { plan, changed: false };
+  }
+
+  let current = { ...plan };
+  let changed = false;
+
+  while (
+    current.status !== "completed" &&
+    current.status !== "cancelled" &&
+    current.status !== "paused" &&
+    current.phaseEndsAt &&
+    now.getTime() >= current.phaseEndsAt.getTime()
+  ) {
+    changed = true;
+    const boundary = new Date(current.phaseEndsAt.getTime());
+    const updates = calculateNextTransition(current, boundary);
+    current = {
+      ...current,
+      ...updates,
+    };
+  }
+
+  return { plan: current, changed };
 }
 
 export function calculateCancelTransition(
@@ -338,7 +375,31 @@ export async function getCurrentPlan(
     .limit(1);
 
   if (activePlans.length > 0) {
-    return activePlans[0];
+    const rawPlan = activePlans[0];
+    const { plan: advancedPlan, changed } = advancePlanToTime(toPlanState(rawPlan), now);
+    if (changed) {
+      const [persisted] = await db
+        .update(pomodoroPlans)
+        .set({
+          status: advancedPlan.status,
+          currentPhase: advancedPlan.currentPhase,
+          currentSession: advancedPlan.currentSession,
+          completedSessions: advancedPlan.completedSessions,
+          phaseStartedAt: advancedPlan.phaseStartedAt,
+          phaseEndsAt: advancedPlan.phaseEndsAt,
+          pausedAt: advancedPlan.pausedAt,
+          pausedRemainingSeconds: advancedPlan.pausedRemainingSeconds,
+          totalFocusSeconds: advancedPlan.totalFocusSeconds,
+          totalBreakSeconds: advancedPlan.totalBreakSeconds,
+          totalPausedSeconds: advancedPlan.totalPausedSeconds,
+          completedAt: advancedPlan.completedAt,
+          updatedAt: now,
+        })
+        .where(eq(pomodoroPlans.id, rawPlan.id))
+        .returning();
+      return persisted;
+    }
+    return rawPlan;
   }
 
   const recentPlans = await db
@@ -388,8 +449,8 @@ export async function startPlan(
       shortBreakDurationSeconds: shortBreakDuration,
       longBreakDurationSeconds: longBreakDuration,
       longBreakInterval,
-      autoStartBreaks: params.autoStartBreaks ?? false,
-      autoStartFocus: params.autoStartFocus ?? false,
+      autoStartBreaks: params.autoStartBreaks ?? true,
+      autoStartFocus: params.autoStartFocus ?? true,
       phaseStartedAt: now,
       phaseEndsAt,
       pausedAt: null,
@@ -413,7 +474,7 @@ export async function pausePlan(
   planId?: number,
   now: Date = new Date()
 ): Promise<PomodoroPlan> {
-  const plan = await resolveActivePlan(userId, planId);
+  const plan = await resolveActivePlan(userId, planId, now);
   if (!plan) {
     throw new Error("No active pomodoro plan to pause.");
   }
@@ -440,7 +501,7 @@ export async function resumePlan(
   planId?: number,
   now: Date = new Date()
 ): Promise<PomodoroPlan> {
-  const plan = await resolveActivePlan(userId, planId);
+  const plan = await resolveActivePlan(userId, planId, now);
   if (!plan) {
     throw new Error("No active pomodoro plan to resume.");
   }
@@ -467,7 +528,7 @@ export async function nextPhase(
   planId?: number,
   now: Date = new Date()
 ): Promise<PomodoroPlan> {
-  const plan = await resolveActivePlan(userId, planId);
+  const plan = await resolveActivePlan(userId, planId, now);
   if (!plan) {
     throw new Error("No active pomodoro plan found.");
   }
@@ -499,7 +560,7 @@ export async function cancelPlan(
   planId?: number,
   now: Date = new Date()
 ): Promise<PomodoroPlan> {
-  const plan = await resolveActivePlan(userId, planId);
+  const plan = await resolveActivePlan(userId, planId, now);
   if (!plan) {
     throw new Error("No active pomodoro plan to cancel.");
   }
@@ -547,7 +608,8 @@ async function cancelActivePlans(userId: number, now: Date): Promise<void> {
 
 async function resolveActivePlan(
   userId: number,
-  planId?: number
+  planId?: number,
+  now: Date = new Date()
 ): Promise<PomodoroPlan | null> {
   if (planId) {
     const [p] = await db
@@ -556,7 +618,31 @@ async function resolveActivePlan(
       .where(
         and(eq(pomodoroPlans.id, planId), eq(pomodoroPlans.userId, userId))
       );
-    return p ?? null;
+    if (!p) return null;
+    const { plan: advanced, changed } = advancePlanToTime(toPlanState(p), now);
+    if (changed) {
+      const [persisted] = await db
+        .update(pomodoroPlans)
+        .set({
+          status: advanced.status,
+          currentPhase: advanced.currentPhase,
+          currentSession: advanced.currentSession,
+          completedSessions: advanced.completedSessions,
+          phaseStartedAt: advanced.phaseStartedAt,
+          phaseEndsAt: advanced.phaseEndsAt,
+          pausedAt: advanced.pausedAt,
+          pausedRemainingSeconds: advanced.pausedRemainingSeconds,
+          totalFocusSeconds: advanced.totalFocusSeconds,
+          totalBreakSeconds: advanced.totalBreakSeconds,
+          totalPausedSeconds: advanced.totalPausedSeconds,
+          completedAt: advanced.completedAt,
+          updatedAt: now,
+        })
+        .where(eq(pomodoroPlans.id, p.id))
+        .returning();
+      return persisted;
+    }
+    return p;
   }
-  return getCurrentPlan(userId);
+  return getCurrentPlan(userId, now);
 }

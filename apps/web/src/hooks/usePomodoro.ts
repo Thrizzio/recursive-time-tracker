@@ -1,9 +1,127 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { PomodoroPlan, PomodoroStartParams } from '../types/pomodoro';
+import { PomodoroPlan, PomodoroStartParams, PomodoroPhase } from '../types/pomodoro';
 import * as pomodoroService from '../services/pomodoro';
 
+// Pure client-side advancement matching server state machine
+function advancePlan(plan: PomodoroPlan, nowMs: number): { plan: PomodoroPlan; changed: boolean } {
+  if (plan.status === 'completed' || plan.status === 'cancelled' || plan.status === 'paused') {
+    return { plan, changed: false };
+  }
+  if (!plan.phaseEndsAt || nowMs < new Date(plan.phaseEndsAt).getTime()) {
+    return { plan, changed: false };
+  }
+
+  let current = { ...plan };
+  let changed = false;
+
+  while (
+    current.status !== 'completed' &&
+    current.status !== 'cancelled' &&
+    current.status !== 'paused' &&
+    current.phaseEndsAt &&
+    nowMs >= new Date(current.phaseEndsAt).getTime()
+  ) {
+    changed = true;
+    const boundary = new Date(current.phaseEndsAt).getTime();
+    const phaseStarted = current.phaseStartedAt ? new Date(current.phaseStartedAt).getTime() : boundary;
+    const elapsed = Math.max(0, Math.floor((boundary - phaseStarted) / 1000));
+
+    const addFocus = current.currentPhase === 'focus' ? elapsed : 0;
+    const addBreak = current.currentPhase !== 'focus' ? elapsed : 0;
+
+    const newTotalFocus = current.totalFocusSeconds + addFocus;
+    const newTotalBreak = current.totalBreakSeconds + addBreak;
+
+    if (current.currentPhase === 'focus') {
+      const newCompleted = current.completedSessions + 1;
+      if (newCompleted >= current.totalSessions) {
+        current = {
+          ...current,
+          status: 'completed',
+          currentSession: current.totalSessions,
+          completedSessions: newCompleted,
+          totalFocusSeconds: newTotalFocus,
+          totalBreakSeconds: newTotalBreak,
+          phaseStartedAt: null,
+          phaseEndsAt: null,
+          completedAt: new Date(boundary).toISOString(),
+        };
+        break;
+      }
+
+      const isLong = newCompleted % current.longBreakInterval === 0;
+      const nextPhase: PomodoroPhase = isLong ? 'longBreak' : 'shortBreak';
+      const breakDuration = isLong ? current.longBreakDurationSeconds : current.shortBreakDurationSeconds;
+
+      if (current.autoStartBreaks !== false) {
+        const nextEnd = boundary + breakDuration * 1000;
+        current = {
+          ...current,
+          status: nextPhase,
+          currentPhase: nextPhase,
+          currentSession: newCompleted + 1,
+          completedSessions: newCompleted,
+          phaseStartedAt: new Date(boundary).toISOString(),
+          phaseEndsAt: new Date(nextEnd).toISOString(),
+          totalFocusSeconds: newTotalFocus,
+          totalBreakSeconds: newTotalBreak,
+        };
+      } else {
+        current = {
+          ...current,
+          status: 'paused',
+          currentPhase: nextPhase,
+          currentSession: newCompleted + 1,
+          completedSessions: newCompleted,
+          pausedAt: new Date(boundary).toISOString(),
+          pausedRemainingSeconds: breakDuration,
+          phaseStartedAt: null,
+          phaseEndsAt: null,
+          totalFocusSeconds: newTotalFocus,
+          totalBreakSeconds: newTotalBreak,
+        };
+        break;
+      }
+    } else {
+      // Break -> Focus
+      const nextSession = current.completedSessions + 1;
+      const focusDuration = current.focusDurationSeconds;
+
+      if (current.autoStartFocus !== false) {
+        const nextEnd = boundary + focusDuration * 1000;
+        current = {
+          ...current,
+          status: 'focus',
+          currentPhase: 'focus',
+          currentSession: nextSession,
+          phaseStartedAt: new Date(boundary).toISOString(),
+          phaseEndsAt: new Date(nextEnd).toISOString(),
+          totalFocusSeconds: newTotalFocus,
+          totalBreakSeconds: newTotalBreak,
+        };
+      } else {
+        current = {
+          ...current,
+          status: 'paused',
+          currentPhase: 'focus',
+          currentSession: nextSession,
+          pausedAt: new Date(boundary).toISOString(),
+          pausedRemainingSeconds: focusDuration,
+          phaseStartedAt: null,
+          phaseEndsAt: null,
+          totalFocusSeconds: newTotalFocus,
+          totalBreakSeconds: newTotalBreak,
+        };
+        break;
+      }
+    }
+  }
+
+  return { plan: current, changed };
+}
+
 export function usePomodoro() {
-  const [plan, setPlan] = useState<PomodoroPlan | null>(null);
+  const [rawPlan, setRawPlan] = useState<PomodoroPlan | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState<number>(Date.now());
@@ -16,11 +134,17 @@ export function usePomodoro() {
     return () => clearInterval(timer);
   }, []);
 
+  // Actively advance plan from timestamps on every tick/eval
+  const plan = useMemo(() => {
+    if (!rawPlan) return null;
+    return advancePlan(rawPlan, now).plan;
+  }, [rawPlan, now]);
+
   const fetchCurrent = useCallback(() => {
     pomodoroService
       .getCurrentPlan()
       .then((current) => {
-        setPlan(current);
+        setRawPlan(current);
         setLoading(false);
       })
       .catch((err) => {
@@ -36,7 +160,7 @@ export function usePomodoro() {
     const handleUpdate = (e: Event) => {
       const custom = e as CustomEvent<PomodoroPlan>;
       if (custom.detail !== undefined) {
-        setPlan(custom.detail);
+        setRawPlan(custom.detail);
       }
     };
 
@@ -52,6 +176,22 @@ export function usePomodoro() {
       window.removeEventListener('pomodoro:reconnect', handleReconnect);
     };
   }, [fetchCurrent]);
+
+  // Sync with backend if client advanced past boundary
+  useEffect(() => {
+    if (!rawPlan || rawPlan.status === 'completed' || rawPlan.status === 'cancelled' || rawPlan.status === 'paused') {
+      return;
+    }
+    if (rawPlan.phaseEndsAt && now >= new Date(rawPlan.phaseEndsAt).getTime()) {
+      const { plan: advanced, changed } = advancePlan(rawPlan, now);
+      if (changed) {
+        setRawPlan(advanced);
+        pomodoroService.getCurrentPlan().then((remote) => {
+          if (remote) setRawPlan(remote);
+        }).catch(() => {});
+      }
+    }
+  }, [rawPlan, now]);
 
   // Timestamp-derived remaining countdown
   const remainingSeconds = useMemo(() => {
@@ -96,7 +236,7 @@ export function usePomodoro() {
     setError(null);
     try {
       const newPlan = await pomodoroService.startPlan(params);
-      setPlan(newPlan);
+      setRawPlan(newPlan);
       return newPlan;
     } catch (err: any) {
       setError(err.message || 'Failed to start pomodoro plan');
@@ -108,7 +248,7 @@ export function usePomodoro() {
     if (!plan) return;
     try {
       const updated = await pomodoroService.pausePlan(plan.id);
-      setPlan(updated);
+      setRawPlan(updated);
     } catch (err: any) {
       setError(err.message || 'Failed to pause pomodoro plan');
     }
@@ -118,7 +258,7 @@ export function usePomodoro() {
     if (!plan) return;
     try {
       const updated = await pomodoroService.resumePlan(plan.id);
-      setPlan(updated);
+      setRawPlan(updated);
     } catch (err: any) {
       setError(err.message || 'Failed to resume pomodoro plan');
     }
@@ -128,7 +268,7 @@ export function usePomodoro() {
     if (!plan) return;
     try {
       const updated = await pomodoroService.nextPhase(plan.id);
-      setPlan(updated);
+      setRawPlan(updated);
     } catch (err: any) {
       setError(err.message || 'Failed to advance pomodoro phase');
     }
@@ -138,7 +278,7 @@ export function usePomodoro() {
     if (!plan) return;
     try {
       const updated = await pomodoroService.skipPhase(plan.id);
-      setPlan(updated);
+      setRawPlan(updated);
     } catch (err: any) {
       setError(err.message || 'Failed to skip pomodoro phase');
     }
@@ -148,14 +288,14 @@ export function usePomodoro() {
     if (!plan) return;
     try {
       const updated = await pomodoroService.cancelPlan(plan.id);
-      setPlan(updated);
+      setRawPlan(updated);
     } catch (err: any) {
       setError(err.message || 'Failed to cancel pomodoro plan');
     }
   }, [plan]);
 
   const updateFromWebSocket = useCallback((incomingPlan: PomodoroPlan) => {
-    setPlan(incomingPlan);
+    setRawPlan(incomingPlan);
   }, []);
 
   return {

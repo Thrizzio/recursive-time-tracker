@@ -38,8 +38,8 @@ export function TimerPanel() {
   const [longBreakMinutes, setLongBreakMinutes] = useState(15);
   const [totalSessions, setTotalSessions] = useState(4);
   const [longBreakInterval, setLongBreakInterval] = useState(4);
-  const [autoStartBreaks, setAutoStartBreaks] = useState(false);
-  const [autoStartFocus, setAutoStartFocus] = useState(false);
+  const [autoStartBreaks, setAutoStartBreaks] = useState(true);
+  const [autoStartFocus, setAutoStartFocus] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
 
   // Custom focus duration state
@@ -473,7 +473,9 @@ export function TimerPanel() {
             {badge.label}
           </span>
           <span className="text-xs font-semibold text-zinc-400">
-            Session {plan.currentSession} of {plan.totalSessions}
+            {plan.currentPhase === 'focus'
+              ? `Session ${plan.currentSession} of ${plan.totalSessions}`
+              : `Next: Session ${plan.currentSession} of ${plan.totalSessions}`}
           </span>
         </div>
 

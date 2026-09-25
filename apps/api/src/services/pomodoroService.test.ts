@@ -4,6 +4,7 @@ import {
   calculateResumeTransition,
   calculateNextTransition,
   calculateCancelTransition,
+  advancePlanToTime,
   type PomodoroPlanState,
 } from "./pomodoroService.js";
 
@@ -19,8 +20,8 @@ function createMockPlan(overrides: Partial<PomodoroPlanState> = {}): PomodoroPla
     shortBreakDurationSeconds: 300, // 5 min
     longBreakDurationSeconds: 900, // 15 min
     longBreakInterval: 4,
-    autoStartBreaks: false,
-    autoStartFocus: false,
+    autoStartBreaks: true,
+    autoStartFocus: true,
     phaseStartedAt: new Date("2026-09-24T10:00:00.000Z"),
     phaseEndsAt: new Date("2026-09-24T10:25:00.000Z"),
     pausedAt: null,
@@ -217,4 +218,219 @@ function createMockPlan(overrides: Partial<PomodoroPlanState> = {}): PomodoroPla
   console.log("✓ Test 9 passed: Cancel plan finalizes status and recorded time");
 }
 
-console.log("\nAll 9 pomodoro service tests passed successfully!\n");
+// ── Test 10: focus -> short break (natural time expiration) ───────────────────
+{
+  const plan = createMockPlan({
+    currentSession: 1,
+    completedSessions: 0,
+    totalSessions: 4,
+    autoStartBreaks: true,
+    phaseStartedAt: new Date("2026-09-24T10:00:00.000Z"),
+    phaseEndsAt: new Date("2026-09-24T10:25:00.000Z"),
+    shortBreakDurationSeconds: 300,
+  });
+
+  const now = new Date("2026-09-24T10:25:00.000Z"); // Exactly when focus finishes
+  const { plan: advanced, changed } = advancePlanToTime(plan, now);
+
+  assert.equal(changed, true, "Plan should advance when boundary reached");
+  assert.equal(advanced.status, "shortBreak", "Status should be shortBreak");
+  assert.equal(advanced.currentPhase, "shortBreak", "Phase should be shortBreak");
+  assert.equal(advanced.currentSession, 2, "Session indicator should advance to 2 for 'Next: Session 2 of 4'");
+  assert.equal(advanced.completedSessions, 1, "Completed sessions incremented to 1");
+  assert.equal(advanced.phaseStartedAt?.toISOString(), "2026-09-24T10:25:00.000Z");
+  assert.equal(advanced.phaseEndsAt?.toISOString(), "2026-09-24T10:30:00.000Z");
+  assert.equal(advanced.totalFocusSeconds, 1500, "1500s of focus recorded");
+  console.log("✓ Test 10 passed: Natural transition focus -> short break with correct session number and countdown");
+}
+
+// ── Test 11: focus -> long break on interval ─────────────────────────────────
+{
+  const plan = createMockPlan({
+    currentSession: 4,
+    completedSessions: 3,
+    totalSessions: 6,
+    longBreakInterval: 4,
+    longBreakDurationSeconds: 900,
+    autoStartBreaks: true,
+    phaseStartedAt: new Date("2026-09-24T12:00:00.000Z"),
+    phaseEndsAt: new Date("2026-09-24T12:25:00.000Z"),
+  });
+
+  const now = new Date("2026-09-24T12:25:00.000Z");
+  const { plan: advanced, changed } = advancePlanToTime(plan, now);
+
+  assert.equal(changed, true);
+  assert.equal(advanced.status, "longBreak");
+  assert.equal(advanced.currentPhase, "longBreak");
+  assert.equal(advanced.currentSession, 5, "Session indicator advances to 5 for 'Next: Session 5 of 6'");
+  assert.equal(advanced.completedSessions, 4);
+  assert.equal(advanced.phaseEndsAt?.toISOString(), "2026-09-24T12:40:00.000Z"); // +15 min
+  console.log("✓ Test 11 passed: Natural transition focus -> long break on configured interval");
+}
+
+// ── Test 12: break -> next focus session ──────────────────────────────────────
+{
+  const plan = createMockPlan({
+    status: "shortBreak",
+    currentPhase: "shortBreak",
+    currentSession: 2,
+    completedSessions: 1,
+    totalSessions: 4,
+    focusDurationSeconds: 1500,
+    autoStartFocus: true,
+    phaseStartedAt: new Date("2026-09-24T10:25:00.000Z"),
+    phaseEndsAt: new Date("2026-09-24T10:30:00.000Z"),
+  });
+
+  const now = new Date("2026-09-24T10:30:00.000Z");
+  const { plan: advanced, changed } = advancePlanToTime(plan, now);
+
+  assert.equal(changed, true);
+  assert.equal(advanced.status, "focus");
+  assert.equal(advanced.currentPhase, "focus");
+  assert.equal(advanced.currentSession, 2, "Session indicator remains Session 2 of 4");
+  assert.equal(advanced.phaseStartedAt?.toISOString(), "2026-09-24T10:30:00.000Z");
+  assert.equal(advanced.phaseEndsAt?.toISOString(), "2026-09-24T10:55:00.000Z");
+  console.log("✓ Test 12 passed: Natural transition break -> next focus with countdown reset");
+}
+
+// ── Test 13: final focus -> completed (never leaves timer at 00:00) ───────────
+{
+  const plan = createMockPlan({
+    currentSession: 4,
+    completedSessions: 3,
+    totalSessions: 4,
+    phaseStartedAt: new Date("2026-09-24T12:00:00.000Z"),
+    phaseEndsAt: new Date("2026-09-24T12:25:00.000Z"),
+  });
+
+  const now = new Date("2026-09-24T12:25:01.000Z");
+  const { plan: advanced, changed } = advancePlanToTime(plan, now);
+
+  assert.equal(changed, true);
+  assert.equal(advanced.status, "completed", "Status is completed");
+  assert.equal(advanced.completedSessions, 4);
+  assert.equal(advanced.phaseEndsAt, null, "phaseEndsAt is cleared");
+  assert.equal(advanced.completedAt?.toISOString(), "2026-09-24T12:25:00.000Z");
+  console.log("✓ Test 13 passed: Final focus completes cleanly without sticking at 00:00");
+}
+
+// ── Test 14: pause/resume around a phase boundary ─────────────────────────────
+{
+  // Plan paused with 10 seconds remaining
+  const plan = createMockPlan({
+    status: "paused",
+    currentPhase: "focus",
+    currentSession: 1,
+    completedSessions: 0,
+    pausedRemainingSeconds: 10,
+    pausedAt: new Date("2026-09-24T10:24:50.000Z"),
+    phaseStartedAt: null,
+    phaseEndsAt: null,
+  });
+
+  // Time passes while paused (say 15 minutes pass)
+  const whilePausedTime = new Date("2026-09-24T10:40:00.000Z");
+  const { plan: advancedWhilePaused, changed: changedWhilePaused } = advancePlanToTime(plan, whilePausedTime);
+  assert.equal(changedWhilePaused, false, "Paused session should not auto-advance boundaries");
+  assert.equal(advancedWhilePaused.status, "paused");
+
+  // User resumes at 10:40:00
+  const resumeUpdates = calculateResumeTransition(plan, whilePausedTime);
+  const resumedPlan: PomodoroPlanState = { ...plan, ...resumeUpdates };
+  assert.equal(resumedPlan.status, "focus");
+  assert.equal(resumedPlan.phaseEndsAt?.toISOString(), "2026-09-24T10:40:10.000Z", "phaseEndsAt is resume time + 10s");
+
+  // 10 seconds later, timer expires and advances naturally into break
+  const expireTime = new Date("2026-09-24T10:40:10.000Z");
+  const { plan: afterExpire, changed: afterExpireChanged } = advancePlanToTime(resumedPlan, expireTime);
+  assert.equal(afterExpireChanged, true);
+  assert.equal(afterExpire.status, "shortBreak");
+  assert.equal(afterExpire.currentSession, 2);
+  assert.equal(afterExpire.phaseEndsAt?.toISOString(), "2026-09-24T10:45:10.000Z");
+  console.log("✓ Test 14 passed: Pause and resume around phase boundary behaves correctly");
+}
+
+// ── Test 15: reconnect / backgrounding when phase(s) expire ───────────────────
+{
+  // User starts session 1 at 10:00:00, then backgrounds app for 35 minutes
+  const plan = createMockPlan({
+    currentSession: 1,
+    completedSessions: 0,
+    totalSessions: 4,
+    focusDurationSeconds: 1500, // 25 min (ends 10:25)
+    shortBreakDurationSeconds: 300, // 5 min (ends 10:30)
+    phaseStartedAt: new Date("2026-09-24T10:00:00.000Z"),
+    phaseEndsAt: new Date("2026-09-24T10:25:00.000Z"),
+  });
+
+  const reopenTime = new Date("2026-09-24T10:35:00.000Z"); // 35 minutes later: 5 mins into Focus Session 2
+  const { plan: advanced, changed } = advancePlanToTime(plan, reopenTime);
+
+  assert.equal(changed, true);
+  assert.equal(advanced.status, "focus", "Derived status is focus");
+  assert.equal(advanced.currentPhase, "focus");
+  assert.equal(advanced.currentSession, 2, "Derived session is Session 2");
+  assert.equal(advanced.completedSessions, 1, "Completed 1 focus session");
+  assert.equal(advanced.phaseStartedAt?.toISOString(), "2026-09-24T10:30:00.000Z");
+  assert.equal(advanced.phaseEndsAt?.toISOString(), "2026-09-24T10:55:00.000Z");
+  assert.equal(advanced.totalFocusSeconds, 1500, "1500s from session 1 recorded");
+  assert.equal(advanced.totalBreakSeconds, 300, "300s from short break recorded");
+
+  // If user reopens after 4 hours (entire plan elapsed):
+  const muchLater = new Date("2026-09-24T14:00:00.000Z");
+  const { plan: fullyDone } = advancePlanToTime(plan, muchLater);
+  assert.equal(fullyDone.status, "completed");
+  assert.equal(fullyDone.completedSessions, 4);
+  console.log("✓ Test 15 passed: Reconnect/backgrounding accurately derives active phase or completed state from timestamps");
+}
+
+// ── Test 16: correct session number and phase displayed across full lifecycle ─
+{
+  let current = createMockPlan({
+    currentSession: 1,
+    completedSessions: 0,
+    totalSessions: 3,
+    focusDurationSeconds: 1500,
+    shortBreakDurationSeconds: 300,
+    phaseStartedAt: new Date("2026-09-24T10:00:00.000Z"),
+    phaseEndsAt: new Date("2026-09-24T10:25:00.000Z"),
+  });
+
+  // 1. Focus session 1
+  assert.equal(current.currentSession, 1);
+  assert.equal(current.currentPhase, "focus");
+
+  // 2. Transition to Break 1
+  current = advancePlanToTime(current, new Date("2026-09-24T10:25:00.000Z")).plan;
+  assert.equal(current.currentPhase, "shortBreak");
+  assert.equal(current.currentSession, 2, "During break, currentSession is 2 for 'Next: Session 2 of 3'");
+  assert.equal(current.completedSessions, 1);
+
+  // 3. Transition to Focus session 2
+  current = advancePlanToTime(current, new Date("2026-09-24T10:30:00.000Z")).plan;
+  assert.equal(current.currentPhase, "focus");
+  assert.equal(current.currentSession, 2, "During focus, currentSession is 2 for 'Session 2 of 3'");
+  assert.equal(current.completedSessions, 1);
+
+  // 4. Transition to Break 2
+  current = advancePlanToTime(current, new Date("2026-09-24T10:55:00.000Z")).plan;
+  assert.equal(current.currentPhase, "shortBreak");
+  assert.equal(current.currentSession, 3, "During break, currentSession is 3 for 'Next: Session 3 of 3'");
+  assert.equal(current.completedSessions, 2);
+
+  // 5. Transition to Focus session 3
+  current = advancePlanToTime(current, new Date("2026-09-24T11:00:00.000Z")).plan;
+  assert.equal(current.currentPhase, "focus");
+  assert.equal(current.currentSession, 3, "During focus, currentSession is 3 for 'Session 3 of 3'");
+  assert.equal(current.completedSessions, 2);
+
+  // 6. Transition to Final Complete
+  current = advancePlanToTime(current, new Date("2026-09-24T11:25:00.000Z")).plan;
+  assert.equal(current.status, "completed");
+  assert.equal(current.completedSessions, 3);
+  console.log("✓ Test 16 passed: Correct session number and phase maintained through every transition");
+}
+
+console.log("\nAll 16 pomodoro service tests passed successfully!\n");

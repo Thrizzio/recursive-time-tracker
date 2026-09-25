@@ -559,4 +559,290 @@ void main() {
       expect(find.text('30:00'), findsOneWidget);
     });
   });
+
+  group('Pomodoro Transitions and Timestamp Derivation', () {
+    test('focus -> short break: natural time expiration advances phase, session and countdown', () {
+      final t0 = DateTime(2026, 9, 25, 10, 0, 0);
+      final endsAt = t0.add(const Duration(minutes: 25));
+
+      final plan = PomodoroPlanModel(
+        id: 1,
+        userId: 1,
+        status: 'focus',
+        currentPhase: 'focus',
+        currentSession: 1,
+        totalSessions: 4,
+        focusDurationSeconds: 1500,
+        shortBreakDurationSeconds: 300,
+        longBreakDurationSeconds: 900,
+        longBreakInterval: 4,
+        autoStartBreaks: true,
+        autoStartFocus: true,
+        phaseStartedAt: t0,
+        phaseEndsAt: endsAt,
+        startedAt: t0,
+      );
+
+      final now = endsAt; // Reached 00:00
+      final advanced = plan.advanceToTime(now);
+
+      expect(advanced.status, 'shortBreak');
+      expect(advanced.currentPhase, 'shortBreak');
+      expect(advanced.currentSession, 2);
+      expect(advanced.completedSessions, 1);
+      expect(advanced.phaseStartedAt, endsAt);
+      expect(advanced.phaseEndsAt, endsAt.add(const Duration(seconds: 300)));
+      expect(advanced.totalFocusSeconds, 1500);
+
+      TimeUtils.clock = () => now;
+      addTearDown(() => TimeUtils.clock = DateTime.now);
+      expect(advanced.remainingDuration, const Duration(seconds: 300));
+    });
+
+    test('focus -> long break: triggers on configured longBreakInterval', () {
+      final t0 = DateTime(2026, 9, 25, 12, 0, 0);
+      final endsAt = t0.add(const Duration(minutes: 25));
+
+      final plan = PomodoroPlanModel(
+        id: 1,
+        userId: 1,
+        status: 'focus',
+        currentPhase: 'focus',
+        currentSession: 4,
+        completedSessions: 3,
+        totalSessions: 6,
+        focusDurationSeconds: 1500,
+        shortBreakDurationSeconds: 300,
+        longBreakDurationSeconds: 900,
+        longBreakInterval: 4,
+        autoStartBreaks: true,
+        autoStartFocus: true,
+        phaseStartedAt: t0,
+        phaseEndsAt: endsAt,
+        startedAt: t0,
+      );
+
+      final now = endsAt;
+      final advanced = plan.advanceToTime(now);
+
+      expect(advanced.status, 'longBreak');
+      expect(advanced.currentPhase, 'longBreak');
+      expect(advanced.currentSession, 5);
+      expect(advanced.completedSessions, 4);
+      expect(advanced.phaseEndsAt, endsAt.add(const Duration(seconds: 900)));
+    });
+
+    test('break -> next focus: transitions automatically and resets countdown to focus duration', () {
+      final t0 = DateTime(2026, 9, 25, 10, 25, 0);
+      final endsAt = t0.add(const Duration(minutes: 5));
+
+      final plan = PomodoroPlanModel(
+        id: 1,
+        userId: 1,
+        status: 'shortBreak',
+        currentPhase: 'shortBreak',
+        currentSession: 2,
+        completedSessions: 1,
+        totalSessions: 4,
+        focusDurationSeconds: 1500,
+        shortBreakDurationSeconds: 300,
+        longBreakDurationSeconds: 900,
+        longBreakInterval: 4,
+        autoStartBreaks: true,
+        autoStartFocus: true,
+        phaseStartedAt: t0,
+        phaseEndsAt: endsAt,
+        startedAt: t0,
+      );
+
+      final now = endsAt;
+      final advanced = plan.advanceToTime(now);
+
+      expect(advanced.status, 'focus');
+      expect(advanced.currentPhase, 'focus');
+      expect(advanced.currentSession, 2);
+      expect(advanced.phaseStartedAt, endsAt);
+      expect(advanced.phaseEndsAt, endsAt.add(const Duration(seconds: 1500)));
+    });
+
+    test('final focus -> completed: completes plan without remaining stuck at 00:00', () {
+      final t0 = DateTime(2026, 9, 25, 12, 0, 0);
+      final endsAt = t0.add(const Duration(minutes: 25));
+
+      final plan = PomodoroPlanModel(
+        id: 1,
+        userId: 1,
+        status: 'focus',
+        currentPhase: 'focus',
+        currentSession: 4,
+        completedSessions: 3,
+        totalSessions: 4,
+        focusDurationSeconds: 1500,
+        shortBreakDurationSeconds: 300,
+        longBreakDurationSeconds: 900,
+        longBreakInterval: 4,
+        autoStartBreaks: true,
+        autoStartFocus: true,
+        phaseStartedAt: t0,
+        phaseEndsAt: endsAt,
+        startedAt: t0,
+      );
+
+      final now = endsAt.add(const Duration(seconds: 1));
+      final advanced = plan.advanceToTime(now);
+
+      expect(advanced.isCompleted, isTrue);
+      expect(advanced.status, 'completed');
+      expect(advanced.completedSessions, 4);
+      expect(advanced.completedAt, endsAt);
+      expect(advanced.phaseEndsAt, isNull);
+      expect(advanced.remainingDuration, Duration.zero);
+    });
+
+    test('pause/resume around phase boundary: preserves paused duration and transitions after resume', () {
+      final pauseTime = DateTime(2026, 9, 25, 10, 24, 50);
+
+      // Plan paused with 10s remaining
+      final plan = PomodoroPlanModel(
+        id: 1,
+        userId: 1,
+        status: 'paused',
+        currentPhase: 'focus',
+        currentSession: 1,
+        completedSessions: 0,
+        totalSessions: 4,
+        focusDurationSeconds: 1500,
+        shortBreakDurationSeconds: 300,
+        longBreakDurationSeconds: 900,
+        longBreakInterval: 4,
+        autoStartBreaks: true,
+        autoStartFocus: true,
+        pausedAt: pauseTime,
+        pausedRemainingSeconds: 10,
+        startedAt: pauseTime,
+      );
+
+      // Advancing while paused does NOT advance phase
+      final later = pauseTime.add(const Duration(minutes: 15));
+      final advancedWhilePaused = plan.advanceToTime(later);
+      expect(advancedWhilePaused.status, 'paused');
+      expect(advancedWhilePaused.pausedRemainingSeconds, 10);
+
+      // Resumed at later
+      final resumed = plan.copyWith(
+        status: 'focus',
+        pausedAt: null,
+        pausedRemainingSeconds: null,
+        phaseStartedAt: later,
+        phaseEndsAt: later.add(const Duration(seconds: 10)),
+      );
+
+      // 10s later, expires and transitions into break
+      final expired = resumed.advanceToTime(later.add(const Duration(seconds: 10)));
+      expect(expired.status, 'shortBreak');
+      expect(expired.currentSession, 2);
+      expect(expired.phaseEndsAt, later.add(const Duration(seconds: 310)));
+    });
+
+    test('reconnect/backgrounding when phase(s) expire: accurately derives active phase and session', () {
+      final t0 = DateTime(2026, 9, 25, 10, 0, 0);
+      final endsAt = t0.add(const Duration(minutes: 25));
+
+      final plan = PomodoroPlanModel(
+        id: 1,
+        userId: 1,
+        status: 'focus',
+        currentPhase: 'focus',
+        currentSession: 1,
+        totalSessions: 4,
+        focusDurationSeconds: 1500,
+        shortBreakDurationSeconds: 300,
+        longBreakDurationSeconds: 900,
+        longBreakInterval: 4,
+        autoStartBreaks: true,
+        autoStartFocus: true,
+        phaseStartedAt: t0,
+        phaseEndsAt: endsAt,
+        startedAt: t0,
+      );
+
+      // Backgrounded for 35 minutes -> 5 minutes into Session 2 focus
+      final reopenTime = t0.add(const Duration(minutes: 35));
+      final derived = plan.advanceToTime(reopenTime);
+
+      expect(derived.status, 'focus');
+      expect(derived.currentPhase, 'focus');
+      expect(derived.currentSession, 2);
+      expect(derived.completedSessions, 1);
+      expect(derived.totalFocusSeconds, 1500);
+      expect(derived.totalBreakSeconds, 300);
+      expect(derived.phaseStartedAt, t0.add(const Duration(minutes: 30)));
+      expect(derived.phaseEndsAt, t0.add(const Duration(minutes: 55)));
+
+      TimeUtils.clock = () => reopenTime;
+      addTearDown(() => TimeUtils.clock = DateTime.now);
+      expect(derived.remainingDuration, const Duration(minutes: 20));
+
+      // Backgrounded for 4 hours -> complete
+      final muchLater = t0.add(const Duration(hours: 4));
+      final fullyComplete = plan.advanceToTime(muchLater);
+      expect(fullyComplete.isCompleted, isTrue);
+      expect(fullyComplete.completedSessions, 4);
+    });
+
+    testWidgets('PomodoroTimerCard displays Next: Session during breaks and Session during focus', (
+      WidgetTester tester,
+    ) async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+      final fakeRepo = FakePomodoroRepository();
+
+      final t0 = DateTime(2026, 9, 25, 10, 25, 0);
+      TimeUtils.clock = () => t0;
+      addTearDown(() => TimeUtils.clock = DateTime.now);
+
+      final breakPlan = PomodoroPlanModel(
+        id: 1,
+        userId: 1,
+        status: 'shortBreak',
+        currentPhase: 'shortBreak',
+        currentSession: 2,
+        totalSessions: 4,
+        focusDurationSeconds: 1500,
+        shortBreakDurationSeconds: 300,
+        longBreakDurationSeconds: 900,
+        longBreakInterval: 4,
+        autoStartBreaks: true,
+        autoStartFocus: true,
+        phaseStartedAt: t0,
+        phaseEndsAt: t0.add(const Duration(seconds: 300)),
+        startedAt: t0,
+      );
+
+      fakeRepo.currentPlan = breakPlan;
+      await TimerStorage(prefs: prefs).savePlan(breakPlan);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ChronologTheme.darkTheme,
+          home: Scaffold(
+            body: ProviderScope(
+              overrides: [
+                sharedPreferencesProvider.overrideWithValue(prefs),
+                pomodoroRepositoryProvider.overrideWithValue(fakeRepo),
+              ],
+              child: const SingleChildScrollView(child: PomodoroTimerCard()),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // In break: shows Next: Session 2 of 4 and SHORT BREAK
+      expect(find.text('SHORT BREAK'), findsOneWidget);
+      expect(find.text('Next: Session 2 of 4'), findsOneWidget);
+      expect(find.text('05:00'), findsOneWidget);
+    });
+  });
 }
