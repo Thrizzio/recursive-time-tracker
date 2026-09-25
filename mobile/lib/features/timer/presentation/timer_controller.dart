@@ -1,187 +1,171 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/utils/time_utils.dart';
+import '../data/pomodoro_repository.dart';
 import '../data/timer_storage.dart';
-import '../domain/timer_state.dart';
+import '../domain/pomodoro_model.dart';
 
-/// Provider for Pomodoro focus timer state and actions.
+/// Provider for Pomodoro focus plan state and actions.
 final pomodoroTimerProvider =
-    NotifierProvider<PomodoroNotifier, TimerState>(() {
+    NotifierProvider<PomodoroNotifier, PomodoroPlanModel?>(() {
   return PomodoroNotifier();
 });
 
-/// Riverpod notifier managing Pomodoro focus session lifecycle.
-class PomodoroNotifier extends Notifier<TimerState> {
-  Timer? _ticker;
-
+/// Riverpod notifier managing Pomodoro focus session lifecycle synchronized with backend.
+class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
   TimerStorage get _storage => ref.read(timerStorageProvider);
+  PomodoroRepository get _repo => ref.read(pomodoroRepositoryProvider);
 
   @override
-  TimerState build() {
-    ref.onDispose(() {
-      _stopTicker();
-    });
+  PomodoroPlanModel? build() {
+    // 1. Recover cached plan if available
+    final cached = _storage.loadPlan();
 
-    // Attempt to recover persisted session
-    final loaded = _storage.loadState();
-    if (loaded != null) {
-      if (loaded.status == TimerStatus.running && loaded.endsAt != null) {
-        final now = TimeUtils.now();
-        if (now.isAfter(loaded.endsAt!)) {
-          // Timer reached 0 while app was in background or closed
-          final finished = loaded.copyWith(
-            status: TimerStatus.completed,
-            clearEndsAt: true,
-          );
-          _storage.saveState(finished);
-          return finished;
-        } else {
-          // Timer is still running! Resume background ticker
-          Future.microtask(() => _startTicker());
-          return loaded;
-        }
-      }
-      return loaded;
+    // 2. Fetch authoritative state from backend
+    Future.microtask(() => refreshFromRemote());
+
+    return cached;
+  }
+
+  /// Refreshes current active plan from the backend REST API.
+  Future<void> refreshFromRemote() async {
+    try {
+      final plan = await _repo.getCurrentPlan();
+      state = plan;
+      await _storage.savePlan(plan);
+    } catch (e) {
+      debugPrint('[PomodoroNotifier] Failed to refresh current plan: $e');
     }
-
-    return const TimerState();
   }
 
-  void _startTicker() {
-    _stopTicker();
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (state.status != TimerStatus.running || state.endsAt == null) {
-        _stopTicker();
-        return;
-      }
-
-      final now = TimeUtils.now();
-      if (now.isAfter(state.endsAt!)) {
-        _stopTicker();
-        state = state.copyWith(
-          status: TimerStatus.completed,
-          clearEndsAt: true,
-        );
-        _storage.saveState(state);
-      }
-    });
+  /// Synchronizes state directly from a WebSocket event payload.
+  void syncFromRemote(Map<String, dynamic>? planJson) {
+    if (planJson != null) {
+      state = PomodoroPlanModel.fromJson(planJson);
+    } else {
+      state = null;
+    }
+    _storage.savePlan(state);
   }
 
-  void _stopTicker() {
-    _ticker?.cancel();
-    _ticker = null;
+  /// Directly set plan (useful in tests or local overrides).
+  void setLocalPlan(PomodoroPlanModel? plan) {
+    state = plan;
+    _storage.savePlan(plan);
   }
 
-  /// Starts or restarts a focus timer session.
-  void start({
-    Duration? customDuration,
+  /// Starts a new Pomodoro focus plan on the backend.
+  Future<PomodoroPlanModel> startPlan({
+    int totalSessions = 4,
+    int focusDurationSeconds = 1500,
+    int shortBreakDurationSeconds = 300,
+    int longBreakDurationSeconds = 900,
+    int longBreakInterval = 4,
+    bool autoStartBreaks = false,
+    bool autoStartFocus = false,
     String? taskId,
     String? taskTitle,
-  }) {
-    final sessionDuration = customDuration ?? state.duration;
-    final endsAt = TimeUtils.now().add(sessionDuration);
-
-    state = state.copyWith(
-      status: TimerStatus.running,
-      duration: sessionDuration,
-      endsAt: endsAt,
-      clearPausedRemaining: true,
-      activeTaskId: taskId,
-      activeTaskTitle: taskTitle,
+  }) async {
+    final newPlan = await _repo.startPlan(
+      totalSessions: totalSessions,
+      focusDurationSeconds: focusDurationSeconds,
+      shortBreakDurationSeconds: shortBreakDurationSeconds,
+      longBreakDurationSeconds: longBreakDurationSeconds,
+      longBreakInterval: longBreakInterval,
+      autoStartBreaks: autoStartBreaks,
+      autoStartFocus: autoStartFocus,
+      taskId: taskId,
+      taskTitle: taskTitle,
     );
-
-    _startTicker();
-    _storage.saveState(state);
+    state = newPlan;
+    await _storage.savePlan(newPlan);
+    return newPlan;
   }
 
-  /// Pauses the running timer, preserving remaining time.
-  void pause() {
-    if (state.status != TimerStatus.running || state.endsAt == null) return;
-
-    final remaining = state.endsAt!.difference(TimeUtils.now());
-    _stopTicker();
-
-    state = state.copyWith(
-      status: TimerStatus.paused,
-      pausedRemaining: remaining.isNegative ? Duration.zero : remaining,
-      clearEndsAt: true,
-    );
-
-    _storage.saveState(state);
+  /// Pauses the running timer, strictly segregating paused time on the backend.
+  Future<void> pause() async {
+    if (state == null) return;
+    final updated = await _repo.pausePlan(state!.id);
+    state = updated;
+    await _storage.savePlan(updated);
   }
 
-  /// Resumes a paused timer with its preserved remaining duration.
-  void resume() {
-    if (state.status != TimerStatus.paused) return;
-
-    final remaining = state.pausedRemaining ?? state.duration;
-    final endsAt = TimeUtils.now().add(remaining);
-
-    state = state.copyWith(
-      status: TimerStatus.running,
-      endsAt: endsAt,
-      clearPausedRemaining: true,
-    );
-
-    _startTicker();
-    _storage.saveState(state);
+  /// Resumes a paused timer with preserved remaining duration.
+  Future<void> resume() async {
+    if (state == null) return;
+    final updated = await _repo.resumePlan(state!.id);
+    state = updated;
+    await _storage.savePlan(updated);
   }
 
-  /// Resets the timer back to stopped ready state.
-  void reset() {
-    _stopTicker();
-
-    state = state.copyWith(
-      status: TimerStatus.stopped,
-      clearEndsAt: true,
-      clearPausedRemaining: true,
-      clearActiveTask: true,
-    );
-
-    _storage.saveState(state);
+  /// Advances to the next phase (focus -> break or break -> focus).
+  Future<void> nextPhase() async {
+    if (state == null) return;
+    final updated = await _repo.nextPhase(state!.id);
+    state = updated;
+    await _storage.savePlan(updated);
   }
 
-  /// Sets the timer duration preset (e.g. 25 min, 50 min).
-  void setDuration(Duration newDuration) {
-    if (state.status != TimerStatus.stopped &&
-        state.status != TimerStatus.completed) {
-      return;
+  /// Skips the current phase.
+  Future<void> skipPhase() async {
+    if (state == null) return;
+    final updated = await _repo.skipPhase(state!.id);
+    state = updated;
+    await _storage.savePlan(updated);
+  }
+
+  /// Cancels the current Pomodoro plan.
+  Future<void> cancelPlan() async {
+    if (state == null) return;
+    final updated = await _repo.cancelPlan(state!.id);
+    state = updated;
+    await _storage.savePlan(updated);
+  }
+
+  /// Reset action: cancels active plan or clears local state if completed.
+  Future<void> reset() async {
+    if (state != null && state!.isActive) {
+      await cancelPlan();
+    } else {
+      state = null;
+      await _storage.clearPlan();
     }
-
-    state = state.copyWith(
-      duration: newDuration,
-      status: TimerStatus.stopped,
-      clearEndsAt: true,
-      clearPausedRemaining: true,
-    );
-
-    _storage.saveState(state);
   }
 
-  /// Convenience method to start a focus timer tied to a specific task.
-  void startFocusForTask({
+  /// Starts a focus session tied to a specific Google task.
+  Future<void> startFocusForTask({
     required String taskId,
     required String taskTitle,
-  }) {
-    start(taskId: taskId, taskTitle: taskTitle);
+    int focusDurationSeconds = 1500,
+  }) async {
+    await startPlan(
+      taskId: taskId,
+      taskTitle: taskTitle,
+      focusDurationSeconds: focusDurationSeconds,
+    );
   }
 }
 
+/// 1-second reactive ticker provider emitting DateTime.now().
+final pomodoroTickerStreamProvider =
+    StreamProvider.autoDispose<DateTime>((ref) async* {
+  yield TimeUtils.now();
+  yield* Stream.periodic(const Duration(seconds: 1), (_) => TimeUtils.now());
+});
+
 /// 1-second reactive stream provider for live countdown ticking.
-/// Derives remaining time directly from state.endsAt when running or pausedRemaining.
 final pomodoroRemainingDurationProvider =
     StreamProvider.autoDispose<Duration>((ref) async* {
-  final timer = ref.watch(pomodoroTimerProvider);
+  final plan = ref.watch(pomodoroTimerProvider);
+  if (plan == null) {
+    yield Duration.zero;
+    return;
+  }
 
-  if (timer.status == TimerStatus.running && timer.endsAt != null) {
-    final initialDiff = timer.endsAt!.difference(TimeUtils.now());
-    yield initialDiff.isNegative ? Duration.zero : initialDiff;
+  yield plan.remainingDuration;
 
-    yield* Stream.periodic(const Duration(seconds: 1), (_) {
-      final diff = timer.endsAt!.difference(TimeUtils.now());
-      return diff.isNegative ? Duration.zero : diff;
-    });
-  } else {
-    yield timer.remainingDuration;
+  if (plan.isActive && !plan.isPaused) {
+    yield* Stream.periodic(const Duration(seconds: 1), (_) => plan.remainingDuration);
   }
 });
