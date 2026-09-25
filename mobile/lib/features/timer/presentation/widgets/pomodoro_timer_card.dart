@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../shared/theme/chronolog_theme.dart';
 import '../../../../shared/utils/time_utils.dart';
@@ -37,7 +38,63 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
   bool _autoStartFocus = false;
   bool _isStarting = false;
 
+  // Custom focus duration state
+  bool _isCustomFocus = false;
+  late final TextEditingController _customFocusController;
+
+  @override
+  void initState() {
+    super.initState();
+    _customFocusController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _customFocusController.dispose();
+    super.dispose();
+  }
+
+  bool get _isCustomFocusValid {
+    if (!_isCustomFocus) return true;
+    final trimmed = _customFocusController.text.trim();
+    if (trimmed.isEmpty) return false;
+    final val = int.tryParse(trimmed);
+    return val != null && val >= 1 && val <= 180 && val.toString() == trimmed;
+  }
+
+  void _onPresetSelect(int mins) {
+    setState(() {
+      _isCustomFocus = false;
+      _focusMinutes = mins;
+    });
+  }
+
+  void _onCustomSelect() {
+    setState(() {
+      _isCustomFocus = true;
+      if (_customFocusController.text.trim().isEmpty) {
+        _customFocusController.text = '$_focusMinutes';
+      } else {
+        final parsed = int.tryParse(_customFocusController.text.trim());
+        if (parsed != null && parsed >= 1 && parsed <= 180) {
+          _focusMinutes = parsed;
+        }
+      }
+    });
+  }
+
+  void _onCustomFocusChanged(String val) {
+    final trimmed = val.trim();
+    final parsed = int.tryParse(trimmed);
+    setState(() {
+      if (parsed != null && parsed >= 1 && parsed <= 180 && parsed.toString() == trimmed) {
+        _focusMinutes = parsed;
+      }
+    });
+  }
+
   Future<void> _handleStartWork() async {
+    if (_isCustomFocus && !_isCustomFocusValid) return;
     setState(() => _isStarting = true);
     try {
       await ref.read(pomodoroTimerProvider.notifier).startPlan(
@@ -217,7 +274,9 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
               ),
             ),
             Text(
-              '$_focusMinutes min',
+              _isCustomFocus && (!_isCustomFocusValid || _customFocusController.text.trim().isEmpty)
+                  ? 'Custom'
+                  : '$_focusMinutes min',
               style: const TextStyle(
                 color: ChronologTheme.cyan400,
                 fontSize: 12,
@@ -228,41 +287,126 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
         ),
         const SizedBox(height: 6),
         Row(
-          children: [15, 25, 45, 50].map((mins) {
-            final isSelected = _focusMinutes == mins;
-            return Expanded(
+          children: [
+            ...[15, 25, 45, 50].map((mins) {
+              final isSelected = !_isCustomFocus && _focusMinutes == mins;
+              return Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: InkWell(
+                    onTap: () => _onPresetSelect(mins),
+                    borderRadius: BorderRadius.circular(6),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: isSelected ? ChronologTheme.cyan950 : ChronologTheme.zinc950,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: isSelected
+                              ? ChronologTheme.cyan400
+                              : ChronologTheme.zinc800,
+                          width: isSelected ? 1.5 : 1.0,
+                        ),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        '${mins}m',
+                        style: TextStyle(
+                          color: isSelected ? ChronologTheme.cyan300 : ChronologTheme.zinc400,
+                          fontSize: 12,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+            Expanded(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 2),
                 child: InkWell(
-                  onTap: () => setState(() => _focusMinutes = mins),
+                  onTap: _onCustomSelect,
                   borderRadius: BorderRadius.circular(6),
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     decoration: BoxDecoration(
-                      color: isSelected ? ChronologTheme.cyan950 : ChronologTheme.zinc950,
+                      color: _isCustomFocus ? ChronologTheme.cyan950 : ChronologTheme.zinc950,
                       borderRadius: BorderRadius.circular(6),
                       border: Border.all(
-                        color: isSelected
+                        color: _isCustomFocus
                             ? ChronologTheme.cyan400
                             : ChronologTheme.zinc800,
-                        width: isSelected ? 1.5 : 1.0,
+                        width: _isCustomFocus ? 1.5 : 1.0,
                       ),
                     ),
                     alignment: Alignment.center,
                     child: Text(
-                      '${mins}m',
+                      'Custom',
                       style: TextStyle(
-                        color: isSelected ? ChronologTheme.cyan300 : ChronologTheme.zinc400,
-                        fontSize: 12,
-                        fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                        color: _isCustomFocus ? ChronologTheme.cyan300 : ChronologTheme.zinc400,
+                        fontSize: 11,
+                        fontWeight: _isCustomFocus ? FontWeight.bold : FontWeight.w500,
                       ),
                     ),
                   ),
                 ),
               ),
-            );
-          }).toList(),
+            ),
+          ],
         ),
+        if (_isCustomFocus) ...[
+          const SizedBox(height: 8),
+          TextField(
+            controller: _customFocusController,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            style: const TextStyle(
+              color: ChronologTheme.zinc50,
+              fontSize: 13,
+            ),
+            decoration: InputDecoration(
+              hintText: 'Enter minutes (1–180)',
+              hintStyle: const TextStyle(
+                color: ChronologTheme.zinc500,
+                fontSize: 12,
+              ),
+              suffixText: 'min',
+              suffixStyle: const TextStyle(
+                color: ChronologTheme.zinc400,
+                fontSize: 12,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
+              ),
+              filled: true,
+              fillColor: ChronologTheme.zinc950,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: ChronologTheme.zinc800),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: ChronologTheme.zinc800),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: ChronologTheme.cyan400),
+              ),
+              errorText: _customFocusController.text.trim().isEmpty
+                  ? 'Please enter a duration'
+                  : !_isCustomFocusValid
+                      ? 'Enter 1 to 180 minutes'
+                      : null,
+              errorStyle: const TextStyle(
+                color: ChronologTheme.red400,
+                fontSize: 11,
+              ),
+            ),
+            onChanged: _onCustomFocusChanged,
+          ),
+        ],
         const SizedBox(height: 14),
 
         // Break Durations (Short Break & Long Break)
@@ -542,68 +686,77 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
         const SizedBox(height: 12),
 
         // PROMINENT "I WILL WORK" BUTTON
-        SizedBox(
-          width: double.infinity,
-          height: 48,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [
-                  Color(0xFF22D3EE), // cyan-400
-                  Color(0xFF67E8F9), // cyan-300
-                ],
-              ),
-              borderRadius: BorderRadius.circular(10),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF06B6D4).withValues(alpha: 0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: ElevatedButton(
-              onPressed: _isStarting ? null : _handleStartWork,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                shadowColor: Colors.transparent,
-                foregroundColor: ChronologTheme.zinc950,
-                shape: RoundedRectangleBorder(
+        Builder(
+          builder: (context) {
+            final isButtonDisabled = _isStarting || (_isCustomFocus && !_isCustomFocusValid);
+            return SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: isButtonDisabled
+                      ? null
+                      : const LinearGradient(
+                          colors: [
+                            Color(0xFF22D3EE), // cyan-400
+                            Color(0xFF67E8F9), // cyan-300
+                          ],
+                        ),
+                  color: isButtonDisabled ? ChronologTheme.zinc800 : null,
                   borderRadius: BorderRadius.circular(10),
-                ),
-                padding: EdgeInsets.zero,
-              ),
-              child: _isStarting
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        color: ChronologTheme.zinc950,
-                      ),
-                    )
-                  : const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.play_arrow,
-                          size: 20,
-                          color: ChronologTheme.zinc950,
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          'I WILL WORK',
-                          style: TextStyle(
-                            color: ChronologTheme.zinc950,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 1.2,
+                  boxShadow: isButtonDisabled
+                      ? []
+                      : [
+                          BoxShadow(
+                            color: const Color(0xFF06B6D4).withValues(alpha: 0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
                           ),
-                        ),
-                      ],
+                        ],
+                ),
+                child: ElevatedButton(
+                  onPressed: isButtonDisabled ? null : _handleStartWork,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    shadowColor: Colors.transparent,
+                    disabledBackgroundColor: Colors.transparent,
+                    disabledForegroundColor: ChronologTheme.zinc500,
+                    foregroundColor: ChronologTheme.zinc950,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
                     ),
-            ),
-          ),
+                    padding: EdgeInsets.zero,
+                  ),
+                  child: _isStarting
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: ChronologTheme.zinc950,
+                          ),
+                        )
+                      : const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.play_arrow,
+                              size: 20,
+                            ),
+                            SizedBox(width: 8),
+                            Text(
+                              'I WILL WORK',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.8,
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+            );
+          },
         ),
       ],
     );

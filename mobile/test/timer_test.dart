@@ -475,5 +475,88 @@ void main() {
       expect(find.text('49:57'), findsOneWidget);
       expect(find.text('3s'), findsOneWidget); // Live focus metric
     });
+
+    testWidgets('supports Custom focus duration option with numeric input and validation', (
+      WidgetTester tester,
+    ) async {
+      var fakeClock = DateTime(2026, 9, 25, 12, 0, 0);
+      TimeUtils.clock = () => fakeClock;
+      addTearDown(() => TimeUtils.clock = DateTime.now);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ChronologTheme.darkTheme,
+          home: Scaffold(
+            body: ProviderScope(
+              overrides: [
+                sharedPreferencesProvider.overrideWithValue(prefs),
+                pomodoroRepositoryProvider.overrideWithValue(fakeRepo),
+              ],
+              child: const SingleChildScrollView(child: PomodoroTimerCard()),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Verify presets and Custom button are visible
+      expect(find.text('15m'), findsWidgets);
+      expect(find.text('25m'), findsWidgets);
+      expect(find.text('45m'), findsOneWidget);
+      expect(find.text('50m'), findsOneWidget);
+      expect(find.text('Custom'), findsOneWidget);
+
+      // Custom input field should not be visible initially
+      expect(find.byType(TextField), findsNothing);
+
+      // Select Custom
+      await tester.tap(find.text('Custom'));
+      await tester.pumpAndSettle();
+
+      // Custom input field should now be visible with default 25 min
+      expect(find.byType(TextField), findsOneWidget);
+      expect(find.text('25'), findsOneWidget);
+
+      // Enter invalid input: 0
+      await tester.enterText(find.byType(TextField), '0');
+      await tester.pumpAndSettle();
+      expect(find.text('Enter 1 to 180 minutes'), findsOneWidget);
+      expect(find.text('Custom'), findsWidgets);
+
+      // Enter empty input
+      await tester.enterText(find.byType(TextField), '');
+      await tester.pumpAndSettle();
+      expect(find.text('Please enter a duration'), findsOneWidget);
+
+      // Enter valid custom input: 35 minutes
+      await tester.enterText(find.byType(TextField), '35');
+      await tester.pumpAndSettle();
+      expect(find.text('35 min'), findsOneWidget);
+      expect(find.text('Enter 1 to 180 minutes'), findsNothing);
+      expect(find.text('Please enter a duration'), findsNothing);
+
+      // Switch back to a preset (45m) - custom input should disappear
+      await tester.tap(find.text('45m'));
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('45 min'), findsOneWidget);
+
+      // Switch back to Custom and enter 30
+      await tester.tap(find.text('Custom'));
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsOneWidget);
+      await tester.enterText(find.byType(TextField), '30');
+      await tester.pumpAndSettle();
+      expect(find.text('30 min'), findsOneWidget);
+
+      // Tap "I WILL WORK" to start session with 30m custom duration
+      await tester.tap(find.text('I WILL WORK'));
+      await tester.pumpAndSettle();
+
+      // Session should start with 30:00 countdown
+      expect(find.text('FOCUS PHASE'), findsOneWidget);
+      expect(find.text('30:00'), findsOneWidget);
+    });
   });
 }
