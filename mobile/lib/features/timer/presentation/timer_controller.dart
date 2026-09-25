@@ -41,37 +41,41 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
 
     if (_lastPhaseKey != nextKey) {
       _lastPhaseKey = nextKey;
-      try {
-        final notifications = ref.read(notificationServiceProvider);
-        if (next.isCompleted && (previous == null || !previous.isCompleted)) {
-          notifications.showNotification(
-            id: 100,
-            title: 'Pomodoro Complete!',
-            body: 'Great job! You finished all ${next.totalSessions} focus sessions.',
-          );
-        } else if (next.currentPhase == 'focus' && previous?.currentPhase != 'focus') {
-          notifications.showNotification(
-            id: 101,
-            title: 'Focus Session ${next.currentSession} Started',
-            body: 'Time to focus! Session ${next.currentSession} of ${next.totalSessions} is underway.',
-          );
-        } else if (next.currentPhase == 'longBreak' && previous?.currentPhase != 'longBreak') {
-          notifications.showNotification(
-            id: 102,
-            title: 'Long Break Started',
-            body: 'Enjoy your long break! Session ${next.currentSession} of ${next.totalSessions} begins after this.',
-          );
-        } else if (next.currentPhase == 'shortBreak' && previous?.currentPhase != 'shortBreak') {
-          notifications.showNotification(
-            id: 103,
-            title: 'Short Break Started',
-            body: 'Take a break! Session ${next.currentSession} of ${next.totalSessions} begins after this.',
-          );
-        }
-      } catch (e) {
-        // Notifications are strictly independent: never throw or block Pomodoro state
-        debugPrint('[PomodoroNotifier] Notification error: $e');
+      unawaited(_safeNotify(previous, next));
+    }
+  }
+
+  Future<void> _safeNotify(PomodoroPlanModel? previous, PomodoroPlanModel next) async {
+    try {
+      final notifications = ref.read(notificationServiceProvider);
+      if (next.isCompleted && (previous == null || !previous.isCompleted)) {
+        await notifications.showNotification(
+          id: 100,
+          title: 'Pomodoro Complete!',
+          body: 'Great job! You finished all ${next.totalSessions} focus sessions.',
+        );
+      } else if (next.currentPhase == 'focus' && previous?.currentPhase != 'focus') {
+        await notifications.showNotification(
+          id: 101,
+          title: 'Focus Session ${next.currentSession} Started',
+          body: 'Time to focus! Session ${next.currentSession} of ${next.totalSessions} is underway.',
+        );
+      } else if (next.currentPhase == 'longBreak' && previous?.currentPhase != 'longBreak') {
+        await notifications.showNotification(
+          id: 102,
+          title: 'Long Break Started',
+          body: 'Enjoy your long break! Session ${next.currentSession} of ${next.totalSessions} begins after this.',
+        );
+      } else if (next.currentPhase == 'shortBreak' && previous?.currentPhase != 'shortBreak') {
+        await notifications.showNotification(
+          id: 103,
+          title: 'Short Break Started',
+          body: 'Take a break! Session ${next.currentSession} of ${next.totalSessions} begins after this.',
+        );
       }
+    } catch (e) {
+      // Notifications are strictly independent: never throw or block Pomodoro state
+      debugPrint('[PomodoroNotifier] Notification error: $e');
     }
   }
 

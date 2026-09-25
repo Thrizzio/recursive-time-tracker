@@ -614,7 +614,7 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
                         fontSize: 12,
                       ),
                       decoration: InputDecoration(
-                        hintText: '1–60 min',
+                        hintText: 'Min (1–60)',
                         hintStyle: const TextStyle(
                           color: ChronologTheme.zinc500,
                           fontSize: 11,
@@ -645,7 +645,7 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
                         errorText: _customShortBreakController.text.trim().isEmpty
                             ? 'Required'
                             : !_isCustomShortBreakValid
-                                ? '1–60 min'
+                                ? 'Enter 1–60 min'
                                 : null,
                         errorStyle: const TextStyle(
                           color: ChronologTheme.red400,
@@ -767,7 +767,7 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
                         fontSize: 12,
                       ),
                       decoration: InputDecoration(
-                        hintText: '1–90 min',
+                        hintText: 'Min (1–90)',
                         hintStyle: const TextStyle(
                           color: ChronologTheme.zinc500,
                           fontSize: 11,
@@ -798,7 +798,7 @@ class _PomodoroTimerCardState extends ConsumerState<PomodoroTimerCard> {
                         errorText: _customLongBreakController.text.trim().isEmpty
                             ? 'Required'
                             : !_isCustomLongBreakValid
-                                ? '1–90 min'
+                                ? 'Enter 1–90 min'
                                 : null,
                         errorStyle: const TextStyle(
                           color: ChronologTheme.red400,

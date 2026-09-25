@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app/core/networking/api_client.dart';
+import 'package:app/core/notifications/notification_service.dart';
 import 'package:app/features/timer/data/pomodoro_repository.dart';
 import 'package:app/features/timer/data/timer_storage.dart';
 import 'package:app/features/timer/domain/pomodoro_model.dart';
@@ -111,6 +112,36 @@ class FakePomodoroRepository implements PomodoroRepository {
     final updated = p.copyWith(status: 'cancelled');
     currentPlan = updated;
     return updated;
+  }
+}
+
+class FakeNotificationService extends NotificationService {
+  final List<Map<String, dynamic>> sentNotifications = [];
+  bool shouldThrow = false;
+  bool permissionGranted = true;
+
+  FakeNotificationService({super.prefs});
+
+  @override
+  Future<bool> requestPermissions() async => permissionGranted;
+
+  @override
+  Future<void> showNotification({
+    required int id,
+    required String title,
+    required String body,
+  }) async {
+    if (shouldThrow) {
+      throw Exception('Notification system failure');
+    }
+    if (!pomodoroNotificationsEnabled || !permissionGranted) {
+      return;
+    }
+    sentNotifications.add({
+      'id': id,
+      'title': title,
+      'body': body,
+    });
   }
 }
 
@@ -505,13 +536,13 @@ void main() {
       expect(find.text('25m'), findsWidgets);
       expect(find.text('45m'), findsOneWidget);
       expect(find.text('50m'), findsOneWidget);
-      expect(find.text('Custom'), findsOneWidget);
+      expect(find.text('Custom'), findsNWidgets(3));
 
       // Custom input field should not be visible initially
       expect(find.byType(TextField), findsNothing);
 
       // Select Custom
-      await tester.tap(find.text('Custom'));
+      await tester.tap(find.text('Custom').first);
       await tester.pumpAndSettle();
 
       // Custom input field should now be visible with default 25 min
@@ -543,7 +574,7 @@ void main() {
       expect(find.text('45 min'), findsOneWidget);
 
       // Switch back to Custom and enter 30
-      await tester.tap(find.text('Custom'));
+      await tester.tap(find.text('Custom').first);
       await tester.pumpAndSettle();
       expect(find.byType(TextField), findsOneWidget);
       await tester.enterText(find.byType(TextField), '30');
@@ -843,6 +874,374 @@ void main() {
       expect(find.text('SHORT BREAK'), findsOneWidget);
       expect(find.text('Next: Session 2 of 4'), findsOneWidget);
       expect(find.text('05:00'), findsOneWidget);
+    });
+
+    test('focus -> break transition with custom durations', () {
+      final t0 = DateTime(2026, 9, 25, 10, 0, 0);
+      final endsAt = t0.add(const Duration(minutes: 35));
+
+      final plan = PomodoroPlanModel(
+        id: 1,
+        userId: 1,
+        status: 'focus',
+        currentPhase: 'focus',
+        currentSession: 1,
+        totalSessions: 4,
+        focusDurationSeconds: 2100, // 35 min
+        shortBreakDurationSeconds: 420, // 7 min
+        longBreakDurationSeconds: 1500, // 25 min
+        longBreakInterval: 4,
+        autoStartBreaks: true,
+        autoStartFocus: true,
+        phaseStartedAt: t0,
+        phaseEndsAt: endsAt,
+        startedAt: t0,
+      );
+
+      final advanced = plan.advanceToTime(endsAt);
+      expect(advanced.status, 'shortBreak');
+      expect(advanced.currentPhase, 'shortBreak');
+      expect(advanced.currentSession, 2);
+      expect(advanced.completedSessions, 1);
+      expect(advanced.totalFocusSeconds, 2100);
+      expect(advanced.phaseEndsAt, endsAt.add(const Duration(seconds: 420)));
+
+      TimeUtils.clock = () => endsAt;
+      addTearDown(() => TimeUtils.clock = DateTime.now);
+      expect(advanced.remainingDuration, const Duration(seconds: 420));
+    });
+
+    test('break -> focus transition with custom durations', () {
+      final t0 = DateTime(2026, 9, 25, 10, 35, 0);
+      final endsAt = t0.add(const Duration(seconds: 420)); // 7 min break
+
+      final breakPlan = PomodoroPlanModel(
+        id: 1,
+        userId: 1,
+        status: 'shortBreak',
+        currentPhase: 'shortBreak',
+        currentSession: 2,
+        totalSessions: 4,
+        focusDurationSeconds: 2100, // 35 min
+        shortBreakDurationSeconds: 420, // 7 min
+        longBreakDurationSeconds: 1500,
+        longBreakInterval: 4,
+        autoStartBreaks: true,
+        autoStartFocus: true,
+        phaseStartedAt: t0,
+        phaseEndsAt: endsAt,
+        startedAt: DateTime(2026, 9, 25, 10, 0, 0),
+        completedSessions: 1,
+        totalFocusSeconds: 2100,
+      );
+
+      final advanced = breakPlan.advanceToTime(endsAt);
+      expect(advanced.status, 'focus');
+      expect(advanced.currentPhase, 'focus');
+      expect(advanced.currentSession, 2);
+      expect(advanced.completedSessions, 1);
+      expect(advanced.totalBreakSeconds, 420);
+      expect(advanced.phaseEndsAt, endsAt.add(const Duration(seconds: 2100)));
+
+      TimeUtils.clock = () => endsAt;
+      addTearDown(() => TimeUtils.clock = DateTime.now);
+      expect(advanced.remainingDuration, const Duration(seconds: 2100));
+    });
+
+    test('focus -> long break transition with custom long break duration', () {
+      final t0 = DateTime(2026, 9, 25, 10, 0, 0);
+      final endsAt = t0.add(const Duration(minutes: 30));
+
+      final plan = PomodoroPlanModel(
+        id: 1,
+        userId: 1,
+        status: 'focus',
+        currentPhase: 'focus',
+        currentSession: 2,
+        totalSessions: 4,
+        focusDurationSeconds: 1800, // 30 min
+        shortBreakDurationSeconds: 300,
+        longBreakDurationSeconds: 1200, // 20 min
+        longBreakInterval: 2, // long break on session 2
+        autoStartBreaks: true,
+        autoStartFocus: true,
+        phaseStartedAt: t0,
+        phaseEndsAt: endsAt,
+        startedAt: DateTime(2026, 9, 25, 9, 25, 0),
+        completedSessions: 1,
+        totalFocusSeconds: 1800,
+      );
+
+      final advanced = plan.advanceToTime(endsAt);
+      expect(advanced.status, 'longBreak');
+      expect(advanced.currentPhase, 'longBreak');
+      expect(advanced.currentSession, 3);
+      expect(advanced.completedSessions, 2);
+      expect(advanced.phaseEndsAt, endsAt.add(const Duration(seconds: 1200)));
+
+      TimeUtils.clock = () => endsAt;
+      addTearDown(() => TimeUtils.clock = DateTime.now);
+      expect(advanced.remainingDuration, const Duration(seconds: 1200));
+    });
+  });
+
+  group('Pomodoro Custom Durations Widget Interaction', () {
+    testWidgets('PomodoroTimerCard supports Custom short and long break durations with validation',
+        (tester) async {
+      final fakeRepo = FakePomodoroRepository();
+      final prefs = await SharedPreferences.getInstance();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ChronologTheme.darkTheme,
+          home: Scaffold(
+            body: ProviderScope(
+              overrides: [
+                sharedPreferencesProvider.overrideWithValue(prefs),
+                pomodoroRepositoryProvider.overrideWithValue(fakeRepo),
+              ],
+              child: const SingleChildScrollView(child: PomodoroTimerCard()),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Find "Custom" buttons in Short Break and Long Break sections
+      final customButtons = find.text('Custom');
+      // 1 for Focus, 1 for Short Break, 1 for Long Break = 3 Custom buttons
+      expect(customButtons, findsNWidgets(3));
+
+      // Tap Short Break "Custom" (second Custom button)
+      await tester.tap(customButtons.at(1));
+      await tester.pumpAndSettle();
+
+      // Short break custom input appears with default '5'
+      expect(find.text('5'), findsOneWidget);
+      final shortBreakInput = find.byType(TextField).first;
+
+      // Enter invalid short break: 0
+      await tester.enterText(shortBreakInput, '0');
+      await tester.pumpAndSettle();
+      expect(find.text('Enter 1–60 min'), findsOneWidget);
+
+      // Enter empty short break
+      await tester.enterText(shortBreakInput, '');
+      await tester.pumpAndSettle();
+      expect(find.text('Required'), findsOneWidget);
+
+      // Enter valid short break: 7 min
+      await tester.enterText(shortBreakInput, '7');
+      await tester.pumpAndSettle();
+      expect(find.text('7m'), findsOneWidget);
+
+      // Tap Long Break "Custom" (third Custom button)
+      await tester.tap(customButtons.at(2));
+      await tester.pumpAndSettle();
+
+      // Long break custom input appears with default '15'
+      expect(find.text('15'), findsOneWidget);
+      final longBreakInput = find.byType(TextField).last;
+
+      // Enter invalid long break: 0
+      await tester.enterText(longBreakInput, '0');
+      await tester.pumpAndSettle();
+      expect(find.text('Enter 1–90 min'), findsOneWidget);
+
+      // Enter valid long break: 28 min
+      await tester.enterText(longBreakInput, '28');
+      await tester.pumpAndSettle();
+      expect(find.text('28m'), findsOneWidget);
+
+      // Tap "I WILL WORK" to start session with custom breaks
+      await tester.tap(find.text('I WILL WORK'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('FOCUS PHASE'), findsOneWidget);
+      expect(fakeRepo.currentPlan?.shortBreakDurationSeconds, 420); // 7m
+      expect(fakeRepo.currentPlan?.longBreakDurationSeconds, 1680); // 28m
+    });
+  });
+
+  group('Pomodoro Notifications and Decoupled Architecture', () {
+    testWidgets('notification successfully scheduled on phase transition', (tester) async {
+      final fakeRepo = FakePomodoroRepository();
+      final prefs = await SharedPreferences.getInstance();
+      final fakeNotifications = FakeNotificationService(prefs: prefs);
+
+      final container = ProviderContainer(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefs),
+          pomodoroRepositoryProvider.overrideWithValue(fakeRepo),
+          notificationServiceProvider.overrideWithValue(fakeNotifications),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(pomodoroTimerProvider.notifier);
+
+      final t0 = DateTime(2026, 9, 25, 10, 0, 0);
+      TimeUtils.clock = () => t0;
+      addTearDown(() => TimeUtils.clock = DateTime.now);
+
+      // Start a plan: session 1 focus
+      final plan = await notifier.startPlan(
+        totalSessions: 2,
+        focusDurationSeconds: 1500,
+        shortBreakDurationSeconds: 300,
+      );
+
+      expect(plan.currentPhase, 'focus');
+
+      // 1. Advance to short break
+      final breakPlan = plan.copyWith(
+        status: 'shortBreak',
+        currentPhase: 'shortBreak',
+        currentSession: 2,
+        completedSessions: 1,
+      );
+      notifier.setLocalPlan(breakPlan);
+
+      expect(fakeNotifications.sentNotifications.length, 1);
+      expect(fakeNotifications.sentNotifications.first['title'], 'Short Break Started');
+
+      // 2. Advance to next focus session
+      final focusPlan2 = breakPlan.copyWith(
+        status: 'focus',
+        currentPhase: 'focus',
+        currentSession: 2,
+        completedSessions: 1,
+      );
+      notifier.setLocalPlan(focusPlan2);
+
+      expect(fakeNotifications.sentNotifications.length, 2);
+      expect(fakeNotifications.sentNotifications.last['title'], 'Focus Session 2 Started');
+
+      // 3. Complete plan
+      final completedPlan = focusPlan2.copyWith(
+        status: 'completed',
+        completedSessions: 2,
+      );
+      notifier.setLocalPlan(completedPlan);
+
+      expect(fakeNotifications.sentNotifications.length, 3);
+      expect(fakeNotifications.sentNotifications.last['title'], 'Pomodoro Complete!');
+    });
+
+    testWidgets('notification unavailable/denied without breaking Pomodoro', (tester) async {
+      final fakeRepo = FakePomodoroRepository();
+      final prefs = await SharedPreferences.getInstance();
+      final fakeNotifications = FakeNotificationService(prefs: prefs)
+        ..permissionGranted = false; // Denied / unavailable
+
+      final container = ProviderContainer(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefs),
+          pomodoroRepositoryProvider.overrideWithValue(fakeRepo),
+          notificationServiceProvider.overrideWithValue(fakeNotifications),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(pomodoroTimerProvider.notifier);
+      final plan = await notifier.startPlan(totalSessions: 2);
+
+      // Advance to break when notifications denied
+      final breakPlan = plan.copyWith(
+        status: 'shortBreak',
+        currentPhase: 'shortBreak',
+        currentSession: 2,
+        completedSessions: 1,
+      );
+      notifier.setLocalPlan(breakPlan);
+
+      // State updated correctly despite no notification sent
+      expect(container.read(pomodoroTimerProvider)?.currentPhase, 'shortBreak');
+      expect(container.read(pomodoroTimerProvider)?.currentSession, 2);
+      expect(fakeNotifications.sentNotifications, isEmpty);
+    });
+
+    testWidgets('notification scheduling failure without breaking Pomodoro', (tester) async {
+      final fakeRepo = FakePomodoroRepository();
+      final prefs = await SharedPreferences.getInstance();
+      final fakeNotifications = FakeNotificationService(prefs: prefs)
+        ..shouldThrow = true; // Simulating platform notification exception
+
+      final container = ProviderContainer(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefs),
+          pomodoroRepositoryProvider.overrideWithValue(fakeRepo),
+          notificationServiceProvider.overrideWithValue(fakeNotifications),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(pomodoroTimerProvider.notifier);
+      final plan = await notifier.startPlan(totalSessions: 2);
+
+      // Advance to break: notification throws internally, Pomodoro state must not crash
+      final breakPlan = plan.copyWith(
+        status: 'shortBreak',
+        currentPhase: 'shortBreak',
+        currentSession: 2,
+        completedSessions: 1,
+      );
+      expect(() => notifier.setLocalPlan(breakPlan), returnsNormally);
+
+      expect(container.read(pomodoroTimerProvider)?.currentPhase, 'shortBreak');
+      expect(container.read(pomodoroTimerProvider)?.currentSession, 2);
+    });
+
+    testWidgets('backgrounding/reconnect with notifications unavailable', (tester) async {
+      final fakeRepo = FakePomodoroRepository();
+      final prefs = await SharedPreferences.getInstance();
+      final fakeNotifications = FakeNotificationService(prefs: prefs)
+        ..permissionGranted = false;
+
+      final t0 = DateTime(2026, 9, 25, 10, 0, 0);
+      final plan = PomodoroPlanModel(
+        id: 1,
+        userId: 1,
+        status: 'focus',
+        currentPhase: 'focus',
+        currentSession: 1,
+        totalSessions: 2,
+        focusDurationSeconds: 1500,
+        shortBreakDurationSeconds: 300,
+        longBreakDurationSeconds: 900,
+        longBreakInterval: 4,
+        autoStartBreaks: true,
+        autoStartFocus: true,
+        phaseStartedAt: t0,
+        phaseEndsAt: t0.add(const Duration(seconds: 1500)),
+        startedAt: t0,
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefs),
+          pomodoroRepositoryProvider.overrideWithValue(fakeRepo),
+          notificationServiceProvider.overrideWithValue(fakeNotifications),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final notifier = container.read(pomodoroTimerProvider.notifier);
+
+      // Simulate device backgrounded for 2000 seconds (focus elapsed, into shortBreak)
+      final tWake = t0.add(const Duration(seconds: 1600));
+      TimeUtils.clock = () => tWake;
+      addTearDown(() => TimeUtils.clock = DateTime.now);
+
+      // State is derived purely from timestamps
+      final derived = plan.advanceToTime(tWake);
+      notifier.setLocalPlan(derived);
+
+      expect(container.read(pomodoroTimerProvider)?.status, 'shortBreak');
+      expect(container.read(pomodoroTimerProvider)?.currentPhase, 'shortBreak');
+      expect(container.read(pomodoroTimerProvider)?.currentSession, 2);
+      expect(container.read(pomodoroTimerProvider)?.remainingDuration, const Duration(seconds: 200));
     });
   });
 }
