@@ -9,6 +9,7 @@ import '../config/api_config.dart';
 import '../../features/auth/presentation/auth_controller.dart';
 import '../../features/auth/presentation/auth_state.dart';
 import '../../features/tasks/presentation/tasks_controller.dart';
+import '../../features/timer/presentation/timer_controller.dart';
 import '../../features/tracking/presentation/tracking_controller.dart';
 import 'api_client.dart';
 
@@ -234,6 +235,11 @@ class WebSocketClient {
         ref.invalidate(tasksProvider);
         break;
 
+      case 'pomodoro.updated':
+        final planJson = data?['plan'] as Map<String, dynamic>?;
+        ref.read(pomodoroTimerProvider.notifier).syncFromRemote(planJson);
+        break;
+
       default:
         debugPrint('[WS] Unhandled event type: $event');
     }
@@ -265,6 +271,7 @@ class WebSocketClient {
       ref.invalidate(todaySummaryProvider);
       ref.invalidate(todayTimeBlocksProvider);
       ref.invalidate(tasksProvider);
+      await ref.read(pomodoroTimerProvider.notifier).refreshFromRemote();
     } catch (e) {
       debugPrint('[WS] Error during REST resync: $e');
     }

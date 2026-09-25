@@ -1,4 +1,4 @@
-import { integer, pgTable, serial, timestamp, varchar, text } from "drizzle-orm/pg-core";
+import { integer, pgTable, serial, timestamp, varchar, text, boolean } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -53,4 +53,34 @@ export const activity_allocations = pgTable("activity_allocations", {
     .notNull()
     .references(() => activities.id, { onDelete: "cascade" }),
   percentage: integer("percentage").notNull(),
+});
+
+export const pomodoroPlans = pgTable("pomodoro_plans", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  status: varchar("status", { length: 30 }).notNull().default("focus"),
+  currentPhase: varchar("current_phase", { length: 30 }).notNull().default("focus"),
+  currentSession: integer("current_session").notNull().default(1),
+  totalSessions: integer("total_sessions").notNull().default(4),
+  focusDurationSeconds: integer("focus_duration_seconds").notNull().default(1500),
+  shortBreakDurationSeconds: integer("short_break_duration_seconds").notNull().default(300),
+  longBreakDurationSeconds: integer("long_break_duration_seconds").notNull().default(900),
+  longBreakInterval: integer("long_break_interval").notNull().default(4),
+  autoStartBreaks: boolean("auto_start_breaks").notNull().default(false),
+  autoStartFocus: boolean("auto_start_focus").notNull().default(false),
+  phaseStartedAt: timestamp("phase_started_at", { withTimezone: true }),
+  phaseEndsAt: timestamp("phase_ends_at", { withTimezone: true }),
+  pausedAt: timestamp("paused_at", { withTimezone: true }),
+  pausedRemainingSeconds: integer("paused_remaining_seconds"),
+  totalFocusSeconds: integer("total_focus_seconds").notNull().default(0),
+  totalBreakSeconds: integer("total_break_seconds").notNull().default(0),
+  totalPausedSeconds: integer("total_paused_seconds").notNull().default(0),
+  completedSessions: integer("completed_sessions").notNull().default(0),
+  taskId: varchar("task_id", { length: 255 }),
+  taskTitle: varchar("task_title", { length: 255 }),
+  startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

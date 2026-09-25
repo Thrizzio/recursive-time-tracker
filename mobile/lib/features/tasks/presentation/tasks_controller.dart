@@ -51,22 +51,32 @@ class TasksActionController {
   final Ref _ref;
   TasksRepository get _repo => _ref.read(tasksRepositoryProvider);
 
-  /// Completes a task in Google Tasks and refreshes the task list.
-  Future<void> completeTask(String taskId) async {
+  /// Completes multiple tasks in Google Tasks and refreshes the task list.
+  Future<void> completeTasks(List<String> taskIds) async {
+    if (taskIds.isEmpty) return;
     final completingNotifier =
         _ref.read(completingTaskIdsProvider.notifier);
-    completingNotifier.markStarted(taskId);
+    for (final id in taskIds) {
+      completingNotifier.markStarted(id);
+    }
 
     try {
-      await _repo.completeTasks([taskId]);
-      // Invalidate to fetch fresh list without the completed task
+      await _repo.completeTasks(taskIds);
+      // Invalidate to fetch fresh list without the completed tasks
       _ref.invalidate(tasksProvider);
     } catch (e) {
-      debugPrint('[TasksActionController] Failed to complete task $taskId: $e');
+      debugPrint('[TasksActionController] Failed to complete tasks: $e');
       rethrow;
     } finally {
-      completingNotifier.markFinished(taskId);
+      for (final id in taskIds) {
+        completingNotifier.markFinished(id);
+      }
     }
+  }
+
+  /// Completes a task in Google Tasks and refreshes the task list.
+  Future<void> completeTask(String taskId) async {
+    await completeTasks([taskId]);
   }
 
   /// Sets user's default Google Task List preference and updates user state.

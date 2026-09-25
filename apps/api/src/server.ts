@@ -9,6 +9,16 @@ import { createSession, getSessionUserId, deleteSession } from "./auth/session.j
 import { getIncompleteTasks, completeTasks, getTaskLists, getTasksFromList } from "./services/google/tasks.js";
 import { listEvents } from "./services/google/calendar.js";
 import { calculateEffectiveBlock, calculateAllocationDurations } from "./services/timeCalculations.js";
+import {
+  ensurePomodoroTable,
+  getCurrentPlan,
+  startPlan,
+  pausePlan,
+  resumePlan,
+  nextPhase,
+  skipPhase,
+  cancelPlan,
+} from "./services/pomodoroService.js";
 
 import { createServer } from "node:http";
 import { setupWebSocketServer, broadcastToUser } from "./ws.js";
@@ -849,10 +859,99 @@ app.get("/time-summary", requireAuth, async (request, response) => {
   }
 });
 
+// ─── Pomodoro Focus Routes ───────────────────────────────────────────────────
+
+app.get("/pomodoro/current", requireAuth, async (_req, res) => {
+  const userId = res.locals.userId as number;
+  try {
+    const plan = await getCurrentPlan(userId);
+    res.json({ plan });
+  } catch (error) {
+    console.error("Failed to get current pomodoro plan:", error);
+    res.status(500).json({ error: "Could not retrieve pomodoro plan." });
+  }
+});
+
+app.post("/pomodoro/start", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as number;
+  try {
+    const plan = await startPlan(userId, req.body);
+    broadcastToUser(userId, "pomodoro.updated", { plan });
+    res.status(201).json({ plan });
+  } catch (error) {
+    console.error("Failed to start pomodoro plan:", error);
+    res.status(500).json({ error: "Could not start pomodoro plan." });
+  }
+});
+
+app.post("/pomodoro/pause", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as number;
+  try {
+    const plan = await pausePlan(userId, req.body?.planId);
+    broadcastToUser(userId, "pomodoro.updated", { plan });
+    res.json({ plan });
+  } catch (error) {
+    console.error("Failed to pause pomodoro plan:", error);
+    res.status(500).json({ error: "Could not pause pomodoro plan." });
+  }
+});
+
+app.post("/pomodoro/resume", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as number;
+  try {
+    const plan = await resumePlan(userId, req.body?.planId);
+    broadcastToUser(userId, "pomodoro.updated", { plan });
+    res.json({ plan });
+  } catch (error) {
+    console.error("Failed to resume pomodoro plan:", error);
+    res.status(500).json({ error: "Could not resume pomodoro plan." });
+  }
+});
+
+app.post("/pomodoro/next", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as number;
+  try {
+    const plan = await nextPhase(userId, req.body?.planId);
+    broadcastToUser(userId, "pomodoro.updated", { plan });
+    res.json({ plan });
+  } catch (error) {
+    console.error("Failed to advance pomodoro phase:", error);
+    res.status(500).json({ error: "Could not advance pomodoro phase." });
+  }
+});
+
+app.post("/pomodoro/skip", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as number;
+  try {
+    const plan = await skipPhase(userId, req.body?.planId);
+    broadcastToUser(userId, "pomodoro.updated", { plan });
+    res.json({ plan });
+  } catch (error) {
+    console.error("Failed to skip pomodoro phase:", error);
+    res.status(500).json({ error: "Could not skip pomodoro phase." });
+  }
+});
+
+app.post("/pomodoro/cancel", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as number;
+  try {
+    const plan = await cancelPlan(userId, req.body?.planId);
+    broadcastToUser(userId, "pomodoro.updated", { plan });
+    res.json({ plan });
+  } catch (error) {
+    console.error("Failed to cancel pomodoro plan:", error);
+    res.status(500).json({ error: "Could not cancel pomodoro plan." });
+  }
+});
+
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 const server = createServer(app);
 setupWebSocketServer(server);
+
+ensurePomodoroTable().catch((err) => {
+  console.error("Failed to ensure pomodoro table:", err);
+});
 
 server.listen(port, () => {
   console.log(`Chronolog API is running on http://localhost:${port}`);

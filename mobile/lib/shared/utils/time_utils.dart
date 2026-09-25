@@ -2,6 +2,12 @@
 class TimeUtils {
   TimeUtils._();
 
+  /// Injectable clock source for deterministic testing.
+  static DateTime Function() clock = DateTime.now;
+
+  /// Returns current DateTime from [clock].
+  static DateTime now() => clock();
+
   /// Formats seconds into a digital timer display `HH:mm:ss` or `mm:ss`.
   static String formatDigital(int totalSeconds) {
     if (totalSeconds < 0) totalSeconds = 0;
@@ -19,7 +25,19 @@ class TimeUtils {
     return '$mStr:$sStr';
   }
 
-  /// Formats elapsed seconds into human readable short format matching web app:
+  /// Formats duration for compact summary displays (e.g. `0m`, `5m`, `1h 20m`).
+  /// Matches web app's `formatMinutes` logic for dashboard metrics.
+  static String formatSummaryDuration(int totalSeconds) {
+    if (totalSeconds < 0) totalSeconds = 0;
+    final h = totalSeconds ~/ 3600;
+    final m = (totalSeconds % 3600) ~/ 60;
+    if (h == 0 && m == 0) return '0m';
+    if (h == 0) return '${m}m';
+    if (m == 0) return '${h}h';
+    return '${h}h ${m}m';
+  }
+
+  /// Formats elapsed seconds into human readable short format:
   /// e.g. `1h 24m`, `45m`, `less than a minute`.
   static String formatHumanShort(int totalSeconds) {
     if (totalSeconds < 0) totalSeconds = 0;

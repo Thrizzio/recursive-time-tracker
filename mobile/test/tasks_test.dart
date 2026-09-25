@@ -1,10 +1,17 @@
+import 'package:flutter/material.dart';
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app/core/networking/api_client.dart';
+import 'package:app/features/auth/domain/user_model.dart';
+import 'package:app/features/auth/presentation/auth_controller.dart';
+import 'package:app/features/auth/presentation/auth_state.dart';
 import 'package:app/features/tasks/data/tasks_repository.dart';
 import 'package:app/features/tasks/domain/task_list_model.dart';
 import 'package:app/features/tasks/domain/task_model.dart';
+import 'package:app/features/tasks/presentation/tasks_controller.dart';
+import 'package:app/features/tasks/presentation/widgets/tasks_card.dart';
 
 class MockTasksHttpClientAdapter implements HttpClientAdapter {
   MockTasksHttpClientAdapter({required this.handler});
@@ -217,5 +224,67 @@ void main() {
       expect(sentBody, contains('list_chosen'));
     });
   });
+
+  group('TasksCard Widget', () {
+    testWidgets('renders incomplete tasks without standalone complete checkbox',
+        (tester) async {
+      const user = UserModel(
+        id: 1,
+        email: 'test@example.com',
+        name: 'Test User',
+        selectedTaskListId: 'list_123',
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          authNotifierProvider.overrideWith(() => _MockAuthNotifier(user)),
+          tasksProvider.overrideWith(
+            (ref) async => [
+              const TaskModel(
+                id: 'task_abc',
+                title: 'Review PR changes',
+                notes: 'Focus on Pomodoro integration',
+                due: '2026-10-01T00:00:00.000Z',
+              ),
+            ],
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            home: Scaffold(
+              body: TasksCard(),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Verify task details are rendered
+      expect(find.text('Review PR changes'), findsOneWidget);
+      expect(find.text('Focus on Pomodoro integration'), findsOneWidget);
+      expect(find.textContaining('Due: Oct 1'), findsOneWidget);
+
+      // Verify timer icon is available to start focus timer
+      expect(find.byIcon(Icons.timer_outlined), findsOneWidget);
+
+      // CRITICAL REQUIREMENT 3: No standalone complete checkbox/radio exists on the card
+      expect(find.byIcon(Icons.radio_button_unchecked), findsNothing);
+      expect(find.byType(Checkbox), findsNothing);
+      expect(find.byTooltip('Mark complete'), findsNothing);
+    });
+  });
+}
+
+class _MockAuthNotifier extends AuthNotifier {
+  _MockAuthNotifier(this._user);
+  final UserModel _user;
+
+  @override
+  AuthState build() => Authenticated(_user);
 }
 
