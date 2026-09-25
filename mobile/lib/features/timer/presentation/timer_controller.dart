@@ -19,21 +19,36 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
 
   @override
   PomodoroPlanModel? build() {
-    // 1. Recover cached plan if available
+    // 1. Recover cached plan if available, advancing to current time
     final cached = _storage.loadPlan();
+    final effective = cached?.advanceToTime(TimeUtils.now());
 
     // 2. Fetch authoritative state from backend
     Future.microtask(() => refreshFromRemote());
 
-    return cached;
+    return effective;
+  }
+
+  /// Checks whether current phase has elapsed, advances local state and reconciles with backend.
+  void checkAutoAdvance() {
+    if (state != null && state!.isActive && !state!.isPaused && state!.phaseEndsAt != null) {
+      final now = TimeUtils.now();
+      if (!now.isBefore(state!.phaseEndsAt!)) {
+        final advanced = state!.advanceToTime(now);
+        state = advanced;
+        _storage.savePlan(advanced);
+        refreshFromRemote();
+      }
+    }
   }
 
   /// Refreshes current active plan from the backend REST API.
   Future<void> refreshFromRemote() async {
     try {
       final plan = await _repo.getCurrentPlan();
-      state = plan;
-      await _storage.savePlan(plan);
+      final effective = plan?.advanceToTime(TimeUtils.now());
+      state = effective;
+      await _storage.savePlan(effective);
     } catch (e) {
       debugPrint('[PomodoroNotifier] Failed to refresh current plan: $e');
     }
@@ -42,7 +57,8 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
   /// Synchronizes state directly from a WebSocket event payload.
   void syncFromRemote(Map<String, dynamic>? planJson) {
     if (planJson != null) {
-      state = PomodoroPlanModel.fromJson(planJson);
+      final parsed = PomodoroPlanModel.fromJson(planJson);
+      state = parsed.advanceToTime(TimeUtils.now());
     } else {
       state = null;
     }
@@ -51,8 +67,8 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
 
   /// Directly set plan (useful in tests or local overrides).
   void setLocalPlan(PomodoroPlanModel? plan) {
-    state = plan;
-    _storage.savePlan(plan);
+    state = plan?.advanceToTime(TimeUtils.now());
+    _storage.savePlan(state);
   }
 
   /// Starts a new Pomodoro focus plan on the backend.
@@ -62,8 +78,8 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
     int shortBreakDurationSeconds = 300,
     int longBreakDurationSeconds = 900,
     int longBreakInterval = 4,
-    bool autoStartBreaks = false,
-    bool autoStartFocus = false,
+    bool autoStartBreaks = true,
+    bool autoStartFocus = true,
     String? taskId,
     String? taskTitle,
   }) async {
@@ -151,7 +167,10 @@ class PomodoroNotifier extends Notifier<PomodoroPlanModel?> {
 final pomodoroTickerStreamProvider =
     StreamProvider.autoDispose<DateTime>((ref) async* {
   yield TimeUtils.now();
-  yield* Stream.periodic(const Duration(seconds: 1), (_) => TimeUtils.now());
+  yield* Stream.periodic(const Duration(seconds: 1), (_) {
+    ref.read(pomodoroTimerProvider.notifier).checkAutoAdvance();
+    return TimeUtils.now();
+  });
 });
 
 /// 1-second reactive stream provider for live countdown ticking.

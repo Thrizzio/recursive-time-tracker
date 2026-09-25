@@ -38,14 +38,55 @@ export function TimerPanel() {
   const [longBreakMinutes, setLongBreakMinutes] = useState(15);
   const [totalSessions, setTotalSessions] = useState(4);
   const [longBreakInterval, setLongBreakInterval] = useState(4);
-  const [autoStartBreaks, setAutoStartBreaks] = useState(false);
-  const [autoStartFocus, setAutoStartFocus] = useState(false);
+  const [autoStartBreaks, setAutoStartBreaks] = useState(true);
+  const [autoStartFocus, setAutoStartFocus] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
+
+  // Custom focus duration state
+  const [isCustomFocus, setIsCustomFocus] = useState(false);
+  const [customFocusInput, setCustomFocusInput] = useState('');
+
+  const isCustomFocusValid = () => {
+    if (!isCustomFocus) return true;
+    const trimmed = customFocusInput.trim();
+    if (!trimmed) return false;
+    const parsed = parseInt(trimmed, 10);
+    return !isNaN(parsed) && parsed >= 1 && parsed <= 180 && parsed.toString() === trimmed;
+  };
+
+  const handlePresetSelect = (mins: number) => {
+    setIsCustomFocus(false);
+    setFocusMinutes(mins);
+  };
+
+  const handleCustomSelect = () => {
+    setIsCustomFocus(true);
+    if (!customFocusInput.trim()) {
+      setCustomFocusInput(focusMinutes.toString());
+    } else {
+      const parsed = parseInt(customFocusInput.trim(), 10);
+      if (!isNaN(parsed) && parsed >= 1 && parsed <= 180) {
+        setFocusMinutes(parsed);
+      }
+    }
+  };
+
+  const handleCustomFocusChange = (val: string) => {
+    setCustomFocusInput(val);
+    const trimmed = val.trim();
+    const parsed = parseInt(trimmed, 10);
+    if (!isNaN(parsed) && parsed >= 1 && parsed <= 180 && parsed.toString() === trimmed) {
+      setFocusMinutes(parsed);
+    }
+  };
 
   const isConfiguring =
     !plan || plan.status === 'completed' || plan.status === 'cancelled';
 
   const handleStartWork = async () => {
+    if (isCustomFocus && !isCustomFocusValid()) {
+      return;
+    }
     setIsStarting(true);
     try {
       await start({
@@ -219,16 +260,20 @@ export function TimerPanel() {
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs">
               <span className="text-zinc-300 font-medium">Focus Duration</span>
-              <span className="text-cyan-400 font-bold">{focusMinutes} min</span>
+              <span className="text-cyan-400 font-bold">
+                {isCustomFocus && (!customFocusInput || !isCustomFocusValid())
+                  ? 'Custom'
+                  : `${focusMinutes} min`}
+              </span>
             </div>
-            <div className="grid grid-cols-4 gap-1.5">
+            <div className="grid grid-cols-5 gap-1.5">
               {[15, 25, 45, 50].map((mins) => (
                 <button
                   key={mins}
                   type="button"
-                  onClick={() => setFocusMinutes(mins)}
+                  onClick={() => handlePresetSelect(mins)}
                   className={`py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-                    focusMinutes === mins
+                    !isCustomFocus && focusMinutes === mins
                       ? 'bg-cyan-950 text-cyan-300 border-cyan-500/80 shadow-sm shadow-cyan-900/40'
                       : 'bg-zinc-800/60 text-zinc-400 border-zinc-700/60 hover:bg-zinc-800'
                   }`}
@@ -236,7 +281,49 @@ export function TimerPanel() {
                   {mins}m
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={handleCustomSelect}
+                className={`py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                  isCustomFocus
+                    ? 'bg-cyan-950 text-cyan-300 border-cyan-500/80 shadow-sm shadow-cyan-900/40'
+                    : 'bg-zinc-800/60 text-zinc-400 border-zinc-700/60 hover:bg-zinc-800'
+                }`}
+              >
+                Custom
+              </button>
             </div>
+
+            {/* Custom Focus Duration Input */}
+            {isCustomFocus && (
+              <div className="pt-1.5 space-y-1">
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="1"
+                    max="180"
+                    value={customFocusInput}
+                    onChange={(e) => handleCustomFocusChange(e.target.value)}
+                    placeholder="Enter minutes (1–180)"
+                    className="w-full bg-zinc-800/90 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-cyan-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    aria-label="Custom focus duration in minutes"
+                    autoFocus
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 pointer-events-none">
+                    min
+                  </span>
+                </div>
+                {customFocusInput.trim() === '' ? (
+                  <p className="text-[11px] text-zinc-400">
+                    Enter duration in minutes (1–180)
+                  </p>
+                ) : !isCustomFocusValid() ? (
+                  <p className="text-[11px] text-red-400">
+                    Please enter a duration between 1 and 180 minutes
+                  </p>
+                ) : null}
+              </div>
+            )}
           </div>
 
           {/* Breaks Selection */}
@@ -350,7 +437,7 @@ export function TimerPanel() {
           {/* Prominent "I WILL WORK" Button */}
           <button
             type="button"
-            disabled={isStarting}
+            disabled={isStarting || (isCustomFocus && !isCustomFocusValid())}
             onClick={handleStartWork}
             className="w-full mt-2 py-3 px-4 rounded-xl font-extrabold text-sm tracking-wider uppercase bg-gradient-to-r from-cyan-400 to-cyan-300 hover:from-cyan-300 hover:to-cyan-200 text-zinc-950 shadow-md shadow-cyan-500/20 hover:shadow-cyan-500/30 transition-all flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-50 cursor-pointer"
           >
@@ -386,7 +473,9 @@ export function TimerPanel() {
             {badge.label}
           </span>
           <span className="text-xs font-semibold text-zinc-400">
-            Session {plan.currentSession} of {plan.totalSessions}
+            {plan.currentPhase === 'focus'
+              ? `Session ${plan.currentSession} of ${plan.totalSessions}`
+              : `Next: Session ${plan.currentSession} of ${plan.totalSessions}`}
           </span>
         </div>
 
