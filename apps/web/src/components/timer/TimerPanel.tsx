@@ -46,12 +46,36 @@ export function TimerPanel() {
   const [isCustomFocus, setIsCustomFocus] = useState(false);
   const [customFocusInput, setCustomFocusInput] = useState('');
 
+  // Custom short break duration state
+  const [isCustomShortBreak, setIsCustomShortBreak] = useState(false);
+  const [customShortBreakInput, setCustomShortBreakInput] = useState('');
+
+  // Custom long break duration state
+  const [isCustomLongBreak, setIsCustomLongBreak] = useState(false);
+  const [customLongBreakInput, setCustomLongBreakInput] = useState('');
+
   const isCustomFocusValid = () => {
     if (!isCustomFocus) return true;
     const trimmed = customFocusInput.trim();
     if (!trimmed) return false;
     const parsed = parseInt(trimmed, 10);
     return !isNaN(parsed) && parsed >= 1 && parsed <= 180 && parsed.toString() === trimmed;
+  };
+
+  const isCustomShortBreakValid = () => {
+    if (!isCustomShortBreak) return true;
+    const trimmed = customShortBreakInput.trim();
+    if (!trimmed) return false;
+    const parsed = parseInt(trimmed, 10);
+    return !isNaN(parsed) && parsed >= 1 && parsed <= 60 && parsed.toString() === trimmed;
+  };
+
+  const isCustomLongBreakValid = () => {
+    if (!isCustomLongBreak) return true;
+    const trimmed = customLongBreakInput.trim();
+    if (!trimmed) return false;
+    const parsed = parseInt(trimmed, 10);
+    return !isNaN(parsed) && parsed >= 1 && parsed <= 90 && parsed.toString() === trimmed;
   };
 
   const handlePresetSelect = (mins: number) => {
@@ -80,11 +104,69 @@ export function TimerPanel() {
     }
   };
 
+  const handleShortBreakPresetSelect = (mins: number) => {
+    setIsCustomShortBreak(false);
+    setShortBreakMinutes(mins);
+  };
+
+  const handleCustomShortBreakSelect = () => {
+    setIsCustomShortBreak(true);
+    if (!customShortBreakInput.trim()) {
+      setCustomShortBreakInput(shortBreakMinutes.toString());
+    } else {
+      const parsed = parseInt(customShortBreakInput.trim(), 10);
+      if (!isNaN(parsed) && parsed >= 1 && parsed <= 60) {
+        setShortBreakMinutes(parsed);
+      }
+    }
+  };
+
+  const handleCustomShortBreakChange = (val: string) => {
+    setCustomShortBreakInput(val);
+    const trimmed = val.trim();
+    const parsed = parseInt(trimmed, 10);
+    if (!isNaN(parsed) && parsed >= 1 && parsed <= 60 && parsed.toString() === trimmed) {
+      setShortBreakMinutes(parsed);
+    }
+  };
+
+  const handleLongBreakPresetSelect = (mins: number) => {
+    setIsCustomLongBreak(false);
+    setLongBreakMinutes(mins);
+  };
+
+  const handleCustomLongBreakSelect = () => {
+    setIsCustomLongBreak(true);
+    if (!customLongBreakInput.trim()) {
+      setCustomLongBreakInput(longBreakMinutes.toString());
+    } else {
+      const parsed = parseInt(customLongBreakInput.trim(), 10);
+      if (!isNaN(parsed) && parsed >= 1 && parsed <= 90) {
+        setLongBreakMinutes(parsed);
+      }
+    }
+  };
+
+  const handleCustomLongBreakChange = (val: string) => {
+    setCustomLongBreakInput(val);
+    const trimmed = val.trim();
+    const parsed = parseInt(trimmed, 10);
+    if (!isNaN(parsed) && parsed >= 1 && parsed <= 90 && parsed.toString() === trimmed) {
+      setLongBreakMinutes(parsed);
+    }
+  };
+
   const isConfiguring =
     !plan || plan.status === 'completed' || plan.status === 'cancelled';
 
   const handleStartWork = async () => {
     if (isCustomFocus && !isCustomFocusValid()) {
+      return;
+    }
+    if (isCustomShortBreak && !isCustomShortBreakValid()) {
+      return;
+    }
+    if (isCustomLongBreak && !isCustomLongBreakValid()) {
       return;
     }
     setIsStarting(true);
@@ -328,50 +410,144 @@ export function TimerPanel() {
 
           {/* Breaks Selection */}
           <div className="grid grid-cols-2 gap-3">
+            {/* Short Break Selection */}
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs">
                 <span className="text-zinc-300 font-medium">Short Break</span>
-                <span className="text-emerald-400 font-bold">{shortBreakMinutes}m</span>
+                <span className="text-emerald-400 font-bold">
+                  {isCustomShortBreak && (!customShortBreakInput || !isCustomShortBreakValid())
+                    ? 'Custom'
+                    : `${shortBreakMinutes}m`}
+                </span>
               </div>
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-3 gap-1.5">
                 {[5, 10].map((m) => (
                   <button
                     key={m}
                     type="button"
-                    onClick={() => setShortBreakMinutes(m)}
-                    className={`py-1 text-xs font-medium rounded-lg border ${
-                      shortBreakMinutes === m
-                        ? 'bg-emerald-950 text-emerald-300 border-emerald-500/80'
+                    onClick={() => handleShortBreakPresetSelect(m)}
+                    className={`py-1 text-xs font-medium rounded-lg border transition-all ${
+                      !isCustomShortBreak && shortBreakMinutes === m
+                        ? 'bg-emerald-950 text-emerald-300 border-emerald-500/80 shadow-sm shadow-emerald-950/40'
                         : 'bg-zinc-800/60 text-zinc-400 border-zinc-700/60 hover:bg-zinc-800'
                     }`}
                   >
                     {m}m
                   </button>
                 ))}
+                <button
+                  type="button"
+                  onClick={handleCustomShortBreakSelect}
+                  className={`py-1 text-xs font-medium rounded-lg border transition-all ${
+                    isCustomShortBreak
+                      ? 'bg-emerald-950 text-emerald-300 border-emerald-500/80 shadow-sm shadow-emerald-950/40'
+                      : 'bg-zinc-800/60 text-zinc-400 border-zinc-700/60 hover:bg-zinc-800'
+                  }`}
+                >
+                  Custom
+                </button>
               </div>
+
+              {/* Custom Short Break Input */}
+              {isCustomShortBreak && (
+                <div className="pt-1 space-y-1">
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="1"
+                      max="60"
+                      value={customShortBreakInput}
+                      onChange={(e) => handleCustomShortBreakChange(e.target.value)}
+                      placeholder="Min (1–60)"
+                      className="w-full bg-zinc-800/90 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      aria-label="Custom short break duration in minutes"
+                      autoFocus
+                    />
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-zinc-400 pointer-events-none">
+                      min
+                    </span>
+                  </div>
+                  {customShortBreakInput.trim() === '' ? (
+                    <p className="text-[10px] text-zinc-400">
+                      Enter minutes (1–60)
+                    </p>
+                  ) : !isCustomShortBreakValid() ? (
+                    <p className="text-[10px] text-red-400">
+                      Enter 1 to 60 minutes
+                    </p>
+                  ) : null}
+                </div>
+              )}
             </div>
 
+            {/* Long Break Selection */}
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs">
                 <span className="text-zinc-300 font-medium">Long Break</span>
-                <span className="text-indigo-400 font-bold">{longBreakMinutes}m</span>
+                <span className="text-indigo-400 font-bold">
+                  {isCustomLongBreak && (!customLongBreakInput || !isCustomLongBreakValid())
+                    ? 'Custom'
+                    : `${longBreakMinutes}m`}
+                </span>
               </div>
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-3 gap-1.5">
                 {[15, 20].map((m) => (
                   <button
                     key={m}
                     type="button"
-                    onClick={() => setLongBreakMinutes(m)}
-                    className={`py-1 text-xs font-medium rounded-lg border ${
-                      longBreakMinutes === m
-                        ? 'bg-indigo-950 text-indigo-300 border-indigo-500/80'
+                    onClick={() => handleLongBreakPresetSelect(m)}
+                    className={`py-1 text-xs font-medium rounded-lg border transition-all ${
+                      !isCustomLongBreak && longBreakMinutes === m
+                        ? 'bg-indigo-950 text-indigo-300 border-indigo-500/80 shadow-sm shadow-indigo-950/40'
                         : 'bg-zinc-800/60 text-zinc-400 border-zinc-700/60 hover:bg-zinc-800'
                     }`}
                   >
                     {m}m
                   </button>
                 ))}
+                <button
+                  type="button"
+                  onClick={handleCustomLongBreakSelect}
+                  className={`py-1 text-xs font-medium rounded-lg border transition-all ${
+                    isCustomLongBreak
+                      ? 'bg-indigo-950 text-indigo-300 border-indigo-500/80 shadow-sm shadow-indigo-950/40'
+                      : 'bg-zinc-800/60 text-zinc-400 border-zinc-700/60 hover:bg-zinc-800'
+                  }`}
+                >
+                  Custom
+                </button>
               </div>
+
+              {/* Custom Long Break Input */}
+              {isCustomLongBreak && (
+                <div className="pt-1 space-y-1">
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="1"
+                      max="90"
+                      value={customLongBreakInput}
+                      onChange={(e) => handleCustomLongBreakChange(e.target.value)}
+                      placeholder="Min (1–90)"
+                      className="w-full bg-zinc-800/90 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-indigo-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      aria-label="Custom long break duration in minutes"
+                      autoFocus
+                    />
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] text-zinc-400 pointer-events-none">
+                      min
+                    </span>
+                  </div>
+                  {customLongBreakInput.trim() === '' ? (
+                    <p className="text-[10px] text-zinc-400">
+                      Enter minutes (1–90)
+                    </p>
+                  ) : !isCustomLongBreakValid() ? (
+                    <p className="text-[10px] text-red-400">
+                      Enter 1 to 90 minutes
+                    </p>
+                  ) : null}
+                </div>
+              )}
             </div>
           </div>
 
@@ -437,7 +613,12 @@ export function TimerPanel() {
           {/* Prominent "I WILL WORK" Button */}
           <button
             type="button"
-            disabled={isStarting || (isCustomFocus && !isCustomFocusValid())}
+            disabled={
+              isStarting ||
+              (isCustomFocus && !isCustomFocusValid()) ||
+              (isCustomShortBreak && !isCustomShortBreakValid()) ||
+              (isCustomLongBreak && !isCustomLongBreakValid())
+            }
             onClick={handleStartWork}
             className="w-full mt-2 py-3 px-4 rounded-xl font-extrabold text-sm tracking-wider uppercase bg-gradient-to-r from-cyan-400 to-cyan-300 hover:from-cyan-300 hover:to-cyan-200 text-zinc-950 shadow-md shadow-cyan-500/20 hover:shadow-cyan-500/30 transition-all flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-50 cursor-pointer"
           >
