@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/theme/chronolog_theme.dart';
 import '../../../shared/utils/color_utils.dart';
+import '../../../shared/utils/time_utils.dart';
 import '../../tasks/presentation/tasks_controller.dart';
 import 'tracking_controller.dart';
+import 'widgets/allocation_bar.dart';
 
 /// Modal bottom sheet implementing the three-step log-session allocation flow:
 /// Step 1: Select Activities
-/// Step 2: Allocate Percentages (defaults to equal split totaling 100%)
+/// Step 2: Allocate Percentages (shared continuous 0-100% multi-point slider)
 /// Step 3: Complete Finished Tasks (optional)
 class LogSessionSheet extends ConsumerStatefulWidget {
   const LogSessionSheet({
@@ -37,7 +39,7 @@ class _LogSessionSheetState extends ConsumerState<LogSessionSheet> {
   // Step: 0 = select, 1 = allocate, 2 = tasks
   int _step = 0;
   final Set<int> _selectedActivityIds = {};
-  final Map<int, int> _allocations = {};
+  List<AllocationItem> _allocations = [];
   final Set<String> _selectedTaskIds = {};
   bool _isSubmitting = false;
   String? _errorMessage;
@@ -55,17 +57,7 @@ class _LogSessionSheetState extends ConsumerState<LogSessionSheet> {
 
   /// Builds equal allocations matching web behavior: base + remainder for first activity.
   void _buildEqualAllocations() {
-    final list = _selectedActivityIds.toList();
-    final n = list.length;
-    if (n == 0) return;
-
-    final base = 100 ~/ n;
-    final remainder = 100 - (base * n);
-
-    _allocations.clear();
-    for (int i = 0; i < n; i++) {
-      _allocations[list[i]] = base + (i == 0 ? remainder : 0);
-    }
+    _allocations = buildEqualAllocations(_selectedActivityIds.toList());
   }
 
   void _proceedToAllocate() {
@@ -80,17 +72,8 @@ class _LogSessionSheetState extends ConsumerState<LogSessionSheet> {
     });
   }
 
-  void _adjustAllocation(int activityId, int delta) {
-    final current = _allocations[activityId] ?? 0;
-    final updated = (current + delta).clamp(1, 100);
-    setState(() {
-      _allocations[activityId] = updated;
-      _errorMessage = null;
-    });
-  }
-
   int get _totalPercentage =>
-      _allocations.values.fold(0, (sum, val) => sum + val);
+      _allocations.fold(0, (sum, val) => sum + val.percentage);
 
   void _proceedToTasks() {
     if (_totalPercentage != 100) {
@@ -113,10 +96,10 @@ class _LogSessionSheetState extends ConsumerState<LogSessionSheet> {
     });
 
     try {
-      final payload = _allocations.entries.map((e) {
+      final payload = _allocations.map((a) {
         return {
-          'activityId': e.key,
-          'percentage': e.value,
+          'activityId': a.activityId,
+          'percentage': a.percentage,
         };
       }).toList();
 
@@ -487,111 +470,101 @@ class _LogSessionSheetState extends ConsumerState<LogSessionSheet> {
                         },
                       );
                     } else {
-                      // Step 2: Allocate Percentages
-                      final selectedList = activities
-                          .where((a) => _selectedActivityIds.contains(a.id))
-                          .toList();
+                      // Step 2: Allocate Percentages (shared continuous 0-100% multi-point slider)
+                      final activityMap = {for (final a in activities) a.id: a};
 
-                      return ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: selectedList.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 12),
-                        itemBuilder: (context, index) {
-                          final act = selectedList[index];
-                          final pct = _allocations[act.id] ?? 0;
-                          final color = ColorUtils.parseHexColor(act.color);
+                      return SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(height: 4),
+                            // Single continuous 0-100% multi-point track
+                            AllocationBar(
+                              activities: activities,
+                              allocations: _allocations,
+                              onChanged: (updated) {
+                                setState(() {
+                                  _allocations = updated;
+                                  _errorMessage = null;
+                                });
+                              },
+                            ),
+                            const SizedBox(height: 16),
+                            // Activity Legend with color dots, names, durations and percentages
+                            for (final alloc in _allocations) ...[
+                              Builder(
+                                builder: (context) {
+                                  final act = activityMap[alloc.activityId];
+                                  if (act == null) return const SizedBox.shrink();
+                                  final color = ColorUtils.parseHexColor(act.color);
+                                  final allocSeconds = (widget.elapsedDuration.inSeconds *
+                                          (alloc.percentage / 100.0))
+                                      .round();
+                                  final durationText = TimeUtils.formatHumanShort(allocSeconds);
 
-                          return Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: ChronologTheme.zinc950,
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: ChronologTheme.zinc800),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Container(
-                                      width: 12,
-                                      height: 12,
-                                      decoration: BoxDecoration(
-                                        color: color,
-                                        shape: BoxShape.circle,
-                                      ),
+                                  return Container(
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
                                     ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        act.name,
-                                        style: const TextStyle(
-                                          color: ChronologTheme.zinc200,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
+                                    decoration: BoxDecoration(
+                                      color: ChronologTheme.zinc950,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: ChronologTheme.zinc800),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 12,
+                                          height: 12,
+                                          decoration: BoxDecoration(
+                                            color: color,
+                                            shape: BoxShape.circle,
+                                          ),
                                         ),
-                                      ),
-                                    ),
-                                    Text(
-                                      '$pct%',
-                                      style: TextStyle(
-                                        color: color,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w700,
-                                        fontFamily: 'monospace',
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  children: [
-                                    IconButton(
-                                      onPressed: _isSubmitting
-                                          ? null
-                                          : () => _adjustAllocation(act.id, -5),
-                                      icon: const Icon(Icons.remove, size: 18),
-                                      color: ChronologTheme.zinc400,
-                                      tooltip: '-5%',
-                                    ),
-                                    Expanded(
-                                      child: SliderTheme(
-                                        data: SliderTheme.of(context).copyWith(
-                                          activeTrackColor: color,
-                                          inactiveTrackColor: ChronologTheme.zinc800,
-                                          thumbColor: color,
-                                          overlayColor: color.withValues(alpha: 0.2),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            act.name,
+                                            style: const TextStyle(
+                                              color: ChronologTheme.zinc200,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
                                         ),
-                                        child: Slider(
-                                          value: pct.toDouble(),
-                                          min: 1,
-                                          max: 100,
-                                          divisions: 99,
-                                          onChanged: _isSubmitting
-                                              ? null
-                                              : (val) {
-                                                  setState(() {
-                                                    _allocations[act.id] = val.round();
-                                                    _errorMessage = null;
-                                                  });
-                                                },
+                                        Text(
+                                          durationText,
+                                          style: const TextStyle(
+                                            color: ChronologTheme.zinc400,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500,
+                                          ),
                                         ),
-                                      ),
+                                        const SizedBox(width: 12),
+                                        SizedBox(
+                                          width: 44,
+                                          child: Text(
+                                            '${alloc.percentage}%',
+                                            textAlign: TextAlign.right,
+                                            style: TextStyle(
+                                              color: color,
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w700,
+                                              fontFamily: 'monospace',
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                    IconButton(
-                                      onPressed: _isSubmitting
-                                          ? null
-                                          : () => _adjustAllocation(act.id, 5),
-                                      icon: const Icon(Icons.add, size: 18),
-                                      color: ChronologTheme.zinc400,
-                                      tooltip: '+5%',
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          );
-                        },
+                                  );
+                                },
+                              ),
+                            ],
+                          ],
+                        ),
                       );
                     }
                   },
